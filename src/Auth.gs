@@ -60,7 +60,7 @@ function teacherLogout(token) {
 }
 function studentLogin(studentId, pin) {
   return publicCall_(function () {
-    requireConfig_();
+    const config = requireConfig_();
     initializeSheets_();
     const id = String(studentId == null ? "" : studentId).trim();
     const secret = String(pin == null ? "" : pin);
@@ -81,7 +81,7 @@ function studentLogin(studentId, pin) {
         "로그인 정보가 올바르지 않거나 명부를 확인해야 합니다.",
         "LOGIN_FAILED",
       );
-    return studentView_(active[0].key);
+    return studentView_(active[0].key, config, active[0]);
   });
 }
 function requireStudent_(key) {

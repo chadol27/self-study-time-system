@@ -220,8 +220,10 @@ function getClosedDates_() {
   );
 }
 
-function isOperatingDate_(key) {
-  return isWeekdayOperating_(key) && !getClosedDates_().has(key);
+function isOperatingDate_(key, closedDates) {
+  return (
+    isWeekdayOperating_(key) && !(closedDates || getClosedDates_()).has(key)
+  );
 }
 function applicationIndex_(key, period) {
   return (weekdayIndex_(key) - 1) * 3 + period - 1;
@@ -235,20 +237,17 @@ function normalizeStatus_(value) {
     : String(Number(value));
 }
 
-function appendAudit_(role, student, key, period, before, after) {
+function appendAudits_(rows) {
+  if (!rows.length) return;
   const sheet = spreadsheet_().getSheetByName(APP.SHEETS.LOG);
-  sheet.appendRow([
-    now_(),
-    role,
-    student.key,
-    student.studentId,
-    parseDateKey_(key),
-    period,
-    normalizeStatus_(before),
-    normalizeStatus_(after),
-  ]);
-  sheet.getRange(sheet.getLastRow(), 1).setNumberFormat("yyyy-MM-dd HH:mm:ss");
-  sheet.getRange(sheet.getLastRow(), 5).setNumberFormat("yyyy-MM-dd");
+  const startRow = sheet.getLastRow() + 1;
+  sheet
+    .getRange(startRow, 1, rows.length, APP.LOG_HEADERS.length)
+    .setValues(rows);
+  sheet
+    .getRange(startRow, 1, rows.length, 1)
+    .setNumberFormat("yyyy-MM-dd HH:mm:ss");
+  sheet.getRange(startRow, 5, rows.length, 1).setNumberFormat("yyyy-MM-dd");
 }
 
 function validateAll_() {

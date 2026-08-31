@@ -152,35 +152,40 @@ function teacherChange_(token, studentKey, key, period, absent) {
         return s.active && s.key === studentKey;
       });
       if (!student) throw userError_("학생을 찾을 수 없습니다.", "NOT_FOUND");
-      ensureDateColumns_(key);
+      const col = ensureDateColumns_(key);
       let changed = 0;
+      const audits = [];
+      const range = attendanceCell_(student, col, 1).offset(0, 0, 1, 3);
+      const values = range.getValues()[0];
       for (let p = period; p <= 3; p++)
         if (isApplied_(student, key, p)) {
-          if (absent)
-            changed += setAttendance_("교사", student, key, p, 3, true) ? 1 : 0;
+          const current = normalizeStatus_(values[p - 1]);
+          let next = current;
+          if (absent) next = "3";
           else {
-            const info = getAttendanceColumns_().find(function (x) {
-              return x.key === key;
-            });
-            const current = normalizeStatus_(
-              attendanceCell_(student, info.col, p).getValue(),
-            );
             if (current === "3") {
               const prior = latestTeacherBefore_(student, key, p);
-              const fallback = wasAutoProcessed_(key) ? 1 : "";
-              changed += setAttendance_(
-                "교사",
-                student,
-                key,
-                p,
-                prior === null || prior === "3" ? fallback : prior,
-                true,
-              )
-                ? 1
-                : 0;
+              const fallback = wasAutoProcessed_(key) ? "1" : "";
+              next = prior === null || prior === "3" ? fallback : prior;
             }
           }
+          if (current !== normalizeStatus_(next)) {
+            values[p - 1] = next === "" ? "" : Number(next);
+            audits.push([
+              now_(),
+              "교사",
+              student.key,
+              student.studentId,
+              parseDateKey_(key),
+              p,
+              current,
+              normalizeStatus_(next),
+            ]);
+            changed++;
+          }
         }
+      if (changed) range.setValues([values]);
+      appendAudits_(audits);
       return { changed: changed, view: teacherSeats_(key, period) };
     });
   });

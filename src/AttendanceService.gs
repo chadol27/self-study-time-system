@@ -12,16 +12,6 @@ function attendanceCell_(student, col, period) {
     .getSheetByName(APP.SHEETS.ROSTER)
     .getRange(student.row, col + period - 1);
 }
-function setAttendance_(role, student, key, period, value, audit) {
-  const col = ensureDateColumns_(key);
-  const cell = attendanceCell_(student, col, period);
-  const before = normalizeStatus_(cell.getValue());
-  const after = normalizeStatus_(value);
-  if (before === after) return false;
-  cell.setValue(after === "" ? "" : Number(after));
-  if (audit) appendAudit_(role, student, key, period, before, after);
-  return true;
-}
 function wasAutoProcessed_(key) {
   if (key < todayKey_()) return true;
   if (key > todayKey_()) return false;
@@ -32,12 +22,15 @@ function wasAutoProcessed_(key) {
   );
 }
 function processOperatingDate_(key) {
+  if (wasAutoProcessed_(key)) return { date: key, processed: 0 };
   if (!isOperatingDate_(key)) return { date: key, processed: 0 };
   return withWriteLock_(function () {
+    if (wasAutoProcessed_(key)) return { date: key, processed: 0 };
     return processOperatingDateUnlocked_(key);
   });
 }
 function processOperatingDateUnlocked_(key) {
+  if (wasAutoProcessed_(key)) return { date: key, processed: 0 };
   const col = ensureDateColumns_(key);
   let count = 0;
   readRoster_()
@@ -119,9 +112,20 @@ function dailyAttendanceJob() {
   return syncFutureAttendanceColumns_();
 }
 
-function studentView_(key) {
-  const config = requireConfig_();
-  const student = requireStudent_(key);
+function refreshStudentAttendance_(student) {
+  const sheet = spreadsheet_().getSheetByName(APP.SHEETS.ROSTER);
+  const width = sheet.getLastColumn() - APP.ATTENDANCE_FIRST_COL + 1;
+  student.attendance =
+    width > 0
+      ? sheet
+          .getRange(student.row, APP.ATTENDANCE_FIRST_COL, 1, width)
+          .getValues()[0]
+      : [];
+  return student;
+}
+function studentView_(key, config, student) {
+  config = config || requireConfig_();
+  student = student || requireStudent_(key);
   const today = todayKey_();
   const max = addDays_(today, 30);
   const cols = getAttendanceColumns_();
@@ -175,8 +179,9 @@ function registerStudentAbsence(studentKey, startKey, endKey) {
         "INVALID_DATE_RANGE",
       );
     const dates = [];
+    const closedDates = getClosedDates_();
     for (let key = start; key <= end; key = addDays_(key, 1))
-      if (isOperatingDate_(key)) dates.push(key);
+      if (isOperatingDate_(key, closedDates)) dates.push(key);
     if (!dates.length)
       throw userError_(
         "선택한 범위에 적용 가능한 운영일이 없습니다.",
@@ -185,6 +190,7 @@ function registerStudentAbsence(studentKey, startKey, endKey) {
     return withWriteLock_(function () {
       const student = requireStudent_(studentKey);
       const appliedDates = [];
+      const audits = [];
       dates.forEach(function (key) {
         if (key === todayKey_() && isTodayStudentClosed_(config))
           throw userError_(
@@ -192,22 +198,36 @@ function registerStudentAbsence(studentKey, startKey, endKey) {
             "TODAY_CLOSED",
           );
         let changed = false;
-        ensureDateColumns_(key);
+        const col = ensureDateColumns_(key);
+        const range = attendanceCell_(student, col, 1).offset(0, 0, 1, 3);
+        const values = range.getValues()[0];
         for (let p = 1; p <= 3; p++)
           if (isApplied_(student, key, p)) {
-            const col = getAttendanceColumns_().find(function (x) {
-              return x.key === key;
-            }).col;
-            const before = normalizeStatus_(
-              attendanceCell_(student, col, p).getValue(),
-            );
-            if (before !== "3")
-              changed =
-                setAttendance_("학생", student, key, p, 2, true) || changed;
+            const before = normalizeStatus_(values[p - 1]);
+            if (before !== "2" && before !== "3") {
+              values[p - 1] = 2;
+              audits.push([
+                now_(),
+                "학생",
+                student.key,
+                student.studentId,
+                parseDateKey_(key),
+                p,
+                before,
+                "2",
+              ]);
+              changed = true;
+            }
           }
+        if (changed) range.setValues([values]);
         if (changed) appliedDates.push(key);
       });
-      const view = studentView_(studentKey);
+      appendAudits_(audits);
+      const view = studentView_(
+        studentKey,
+        config,
+        refreshStudentAttendance_(student),
+      );
       view.appliedDates = appliedDates;
       view.appliedCount = appliedDates.length;
       return view;
@@ -232,17 +252,33 @@ function cancelStudentAbsence(studentKey, key) {
       if (!info) throw userError_("취소할 사전 결석이 없습니다.", "NOT_FOUND");
       let count = 0;
       const restore = wasAutoProcessed_(key) ? 1 : "";
+      const audits = [];
+      const range = attendanceCell_(student, info.col, 1).offset(0, 0, 1, 3);
+      const values = range.getValues()[0];
       for (let p = 1; p <= 3; p++)
-        if (
-          normalizeStatus_(attendanceCell_(student, info.col, p).getValue()) ===
-          "2"
-        )
-          count += setAttendance_("학생", student, key, p, restore, true)
-            ? 1
-            : 0;
+        if (normalizeStatus_(values[p - 1]) === "2") {
+          values[p - 1] = restore;
+          audits.push([
+            now_(),
+            "학생",
+            student.key,
+            student.studentId,
+            parseDateKey_(key),
+            p,
+            "2",
+            normalizeStatus_(restore),
+          ]);
+          count++;
+        }
       if (!count)
         throw userError_("취소할 수 있는 사전 결석이 없습니다.", "NOT_FOUND");
-      return studentView_(studentKey);
+      range.setValues([values]);
+      appendAudits_(audits);
+      return studentView_(
+        studentKey,
+        config,
+        refreshStudentAttendance_(student),
+      );
     });
   });
 }
