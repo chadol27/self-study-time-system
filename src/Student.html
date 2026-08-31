@@ -7,11 +7,10 @@
   <body>
     <main>
       <nav><a href="<?= appUrl ?>">← 메인</a></nav>
-      <h1>학생 사전 결석 관리</h1>
+      <h1>결석일 사전 등록</h1>
       <div id="config-error" class="notice error hidden"></div>
       <section id="student-content" class="stack">
         <form id="login" class="card stack">
-          <h2>학생 로그인</h2>
           <label>
             학번
             <input
@@ -23,7 +22,7 @@
             />
           </label>
           <label>
-            전화번호 뒤 4자리
+            전화번호 뒷자리
             <input
               id="pin"
               type="password"
@@ -42,7 +41,6 @@
             <div class="topbar">
               <div>
                 <strong id="identity"></strong>
-                <div id="deadline" class="muted"></div>
               </div>
               <button id="student-logout" class="secondary" type="button">
                 로그아웃
@@ -50,7 +48,7 @@
             </div>
           </section>
           <form id="absence-form" class="card stack">
-            <h2>사전 결석 등록</h2>
+            <h2>결석일 등록</h2>
             <div class="row">
               <label>
                 시작일
@@ -61,15 +59,11 @@
                 <input id="end-date" type="date" required />
               </label>
             </div>
-            <p class="muted">
-              월~목 운영일 중 신청한 모든 교시에 적용됩니다. 주말과 미운영일은
-              제외됩니다.
-            </p>
             <button type="submit">등록</button>
             <div id="absence-message" class="notice hidden"></div>
           </form>
           <section class="card">
-            <h2>등록한 사전 결석</h2>
+            <h2>등록된 결석일</h2>
             <ul id="absence-list" class="list"></ul>
           </section>
         </div>
@@ -89,9 +83,6 @@
         document.getElementById("dashboard").classList.remove("hidden");
         document.getElementById("identity").textContent =
           `${v.name} (${v.studentId})`;
-        document.getElementById("deadline").textContent = v.todayClosed
-          ? "오늘 결석 변경은 마감되었습니다."
-          : "오늘 결석 변경이 가능합니다.";
         for (const id of ["start-date", "end-date"]) {
           const e = document.getElementById(id);
           e.min = v.today;
@@ -101,14 +92,14 @@
         const ul = document.getElementById("absence-list");
         ul.innerHTML = "";
         if (!v.absences.length) {
-          ul.innerHTML = '<li class="muted">등록된 사전 결석이 없습니다.</li>';
+          ul.innerHTML = '<li class="muted">결석일이 없습니다.</li>';
         }
         v.absences.forEach((a) => {
           const li = document.createElement("li");
           li.innerHTML = `<strong>${escapeHtml(a.date)}</strong> · ${a.periods.join(", ")}교시 `;
           const b = document.createElement("button");
           b.className = "secondary";
-          b.textContent = a.cancellable ? "취소" : "취소 마감";
+          b.textContent = a.cancellable ? "취소" : "취소 불가";
           b.disabled = !a.cancellable;
           b.onclick = async () => {
             setBusy(b, true);
@@ -169,7 +160,7 @@
             render(d);
             message(
               document.getElementById("absence-message"),
-              `${d.appliedCount}개 운영일에 적용했습니다: ${d.appliedDates.join(", ") || "변경 없음"}`,
+              `${d.appliedCount}일 적용했습니다: ${d.appliedDates.join(", ") || "변경 없음"}`,
               "success",
             );
           } catch (err) {
