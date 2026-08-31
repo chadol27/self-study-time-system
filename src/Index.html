@@ -10,8 +10,20 @@
       <div id="config-error" class="notice error hidden"></div>
       <section id="main-content" class="card stack">
         <div class="menu">
-          <a class="button" href="<?= appUrl ?>?page=student">학생</a>
-          <a class="button" href="<?= appUrl ?>?page=teacher">교사</a>
+          <a
+            class="button"
+            href="<?= appUrl ?>?page=student"
+            data-loading-label="학생 화면 불러오는 중…"
+          >
+            학생
+          </a>
+          <a
+            class="button"
+            href="<?= appUrl ?>?page=teacher"
+            data-loading-label="교사 화면 불러오는 중…"
+          >
+            교사
+          </a>
         </div>
       </section>
     </main>
@@ -21,6 +33,7 @@
     <?!= include('Client'); ?>
     <script>
       setupConfigGate("main-content", "config-error");
+      setupNavigationFeedback();
     </script>
   </body>
 </html>

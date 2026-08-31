@@ -66,7 +66,7 @@ function studentLogin(studentId, pin) {
     const secret = String(pin == null ? "" : pin);
     if (!id || !/^\d{4}$/.test(secret))
       throw userError_(
-        "학번과 전화번호 뒤 4자리를 확인해 주세요.",
+        "학번과 전화번호 뒤 4자리를 정확히 입력해주세요.",
         "LOGIN_FAILED",
       );
     const active = readRoster_().filter(function (s) {
@@ -77,10 +77,7 @@ function studentLogin(studentId, pin) {
       !/^\d{4}$/.test(active[0].pin) ||
       active[0].pin !== secret
     )
-      throw userError_(
-        "로그인 정보가 올바르지 않거나 명부를 확인해야 합니다.",
-        "LOGIN_FAILED",
-      );
+      throw userError_("로그인 정보가 올바르지 않습니다.", "LOGIN_FAILED");
     return studentView_(active[0].key, config, active[0]);
   });
 }

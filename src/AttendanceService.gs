@@ -193,10 +193,7 @@ function registerStudentAbsence(studentKey, startKey, endKey) {
       const audits = [];
       dates.forEach(function (key) {
         if (key === todayKey_() && isTodayStudentClosed_(config))
-          throw userError_(
-            "오늘의 결석 등록 시간이 마감되었습니다.",
-            "TODAY_CLOSED",
-          );
+          throw userError_("당일 등록이 마감되었습니다.", "TODAY_CLOSED");
         let changed = false;
         const col = ensureDateColumns_(key);
         const range = attendanceCell_(student, col, 1).offset(0, 0, 1, 3);
@@ -240,10 +237,7 @@ function cancelStudentAbsence(studentKey, key) {
     key = String(key);
     assertFutureRange_(key, false);
     if (key === todayKey_() && isTodayStudentClosed_(config))
-      throw userError_(
-        "오늘의 결석 취소 시간이 마감되었습니다.",
-        "TODAY_CLOSED",
-      );
+      throw userError_("당일 등록이 마감되었습니다.", "TODAY_CLOSED");
     return withWriteLock_(function () {
       const student = requireStudent_(studentKey);
       const info = getAttendanceColumns_().find(function (x) {

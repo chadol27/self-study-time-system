@@ -8,10 +8,18 @@
     <main>
       <div class="topbar">
         <div>
-          <nav><a href="<?= appUrl ?>">← 메인</a></nav>
+          <nav>
+            <a href="<?= appUrl ?>" data-loading-label="메인 화면 불러오는 중…">
+              ← 메인
+            </a>
+          </nav>
           <h1>교사 좌석 및 출결 관리</h1>
         </div>
         <button id="logout" class="secondary" type="button">로그아웃</button>
+      </div>
+      <div id="teacher-loading" class="page-loading" role="status">
+        <span class="loading-spinner" aria-hidden="true"></span>
+        <strong>불러오는 중...</strong>
       </div>
       <div id="config-error" class="notice error hidden"></div>
       <form id="teacher-login" class="card stack hidden">
@@ -49,7 +57,7 @@
           <h2>명부 확인 필요</h2>
           <div id="errors" class="errors"></div>
         </section>
-        <section class="card">
+        <section id="seat-card" class="card">
           <div class="seat-wrap"><div id="seats" class="seats"></div></div>
           <div id="batch-actions" class="batch-actions hidden">
             <strong id="selected-count">0명 선택됨</strong>
@@ -83,11 +91,26 @@
     <script>
       let token = localStorage.getItem("sgs_teacher_token"),
         current = null,
-        selectedKeys = new Set();
+        selectedKeys = new Set(),
+        seatLoadCount = 0;
+      function setTeacherLoading(loading) {
+        document
+          .getElementById("teacher-loading")
+          .classList.toggle("hidden", !loading);
+      }
+      function setSeatsLoading(loading) {
+        seatLoadCount = Math.max(0, seatLoadCount + (loading ? 1 : -1));
+        const card = document.getElementById("seat-card");
+        const busy = seatLoadCount > 0;
+        card.toggleAttribute("inert", busy);
+        card.setAttribute("aria-busy", String(busy));
+        card.classList.toggle("loading", busy);
+      }
       function authFail() {
         localStorage.removeItem("sgs_teacher_token");
         token = null;
         selectedKeys.clear();
+        setTeacherLoading(false);
         document.getElementById("teacher-content").classList.add("hidden");
         document.getElementById("teacher-login").classList.remove("hidden");
       }
@@ -124,6 +147,7 @@
           .join("<br>");
       }
       function toggleSeat(studentKey) {
+        if (seatLoadCount) return;
         if (selectedKeys.has(studentKey)) selectedKeys.delete(studentKey);
         else selectedKeys.add(studentKey);
         updateSelectionUi();
@@ -144,12 +168,16 @@
           .classList.toggle("hidden", count === 0);
       }
       function openSeat(s) {
+        if (seatLoadCount) return;
         document.getElementById("seat-detail").innerHTML =
           `<p><strong>${escapeHtml(s.student.name)}</strong> (${escapeHtml(s.student.studentId)})</p><p>좌석: ${s.seat}번<br>신청 교시: ${s.appliedPeriods.join(", ")}교시<br>현재 상태: ${escapeHtml(s.label)}</p>`;
         document.getElementById("seat-dialog").showModal();
       }
       async function loadSeats() {
         const b = document.getElementById("refresh");
+        const dialog = document.getElementById("seat-dialog");
+        if (dialog.open) dialog.close();
+        setSeatsLoading(true);
         setBusy(b, true);
         try {
           renderSeats(
@@ -167,10 +195,11 @@
           else message(document.getElementById("message"), e.message, "error");
         } finally {
           setBusy(b, false);
+          setSeatsLoading(false);
         }
       }
       async function change(action, button) {
-        if (!selectedKeys.size) return;
+        if (seatLoadCount || !selectedKeys.size) return;
         setBusy(button, true);
         document
           .querySelectorAll("#batch-actions button")
@@ -203,7 +232,13 @@
         }
       }
       async function init() {
-        if (!setupConfigGate("teacher-content", "config-error")) return;
+        setTeacherLoading(true);
+        document.getElementById("teacher-login").classList.add("hidden");
+        document.getElementById("teacher-content").classList.add("hidden");
+        if (!setupConfigGate("teacher-content", "config-error")) {
+          setTeacherLoading(false);
+          return;
+        }
         if (!token) return authFail();
         try {
           const [base, dates] = await Promise.all([
@@ -217,9 +252,10 @@
             sel.add(new Option(base.defaultDate, base.defaultDate));
           sel.value = base.defaultDate;
           document.getElementById("period").value = String(base.defaultPeriod);
-          document.getElementById("teacher-login").classList.add("hidden");
-          document.getElementById("teacher-content").classList.remove("hidden");
           await loadSeats();
+          if (!token) return;
+          setTeacherLoading(false);
+          document.getElementById("teacher-content").classList.remove("hidden");
         } catch (e) {
           authFail();
         }
@@ -269,6 +305,7 @@
         authFail();
         if (oldToken) await callServer("teacherLogout", oldToken);
       };
+      setupNavigationFeedback();
       init();
     </script>
   </body>

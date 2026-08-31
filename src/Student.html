@@ -6,7 +6,11 @@
   </head>
   <body>
     <main>
-      <nav><a href="<?= appUrl ?>">← 메인</a></nav>
+      <nav>
+        <a href="<?= appUrl ?>" data-loading-label="메인 화면 불러오는 중…">
+          ← 메인
+        </a>
+      </nav>
       <h1>결석일 사전 등록</h1>
       <div id="config-error" class="notice error hidden"></div>
       <section id="student-content" class="stack">
@@ -106,18 +110,26 @@
         );
         render(v);
       }
+      function nextDateKey(key) {
+        const date = new Date(`${key}T00:00:00Z`);
+        date.setUTCDate(date.getUTCDate() + 1);
+        return date.toISOString().slice(0, 10);
+      }
       function render(v) {
         view = v;
         document.getElementById("login").classList.add("hidden");
         document.getElementById("dashboard").classList.remove("hidden");
         document.getElementById("identity").textContent =
           `${v.name} (${v.studentId})`;
-        for (const id of ["start-date", "end-date"]) {
-          const e = document.getElementById(id);
-          e.min = v.today;
-          e.max = v.maxDate;
-          if (!e.value) e.value = v.today;
-        }
+        const start = document.getElementById("start-date");
+        const startMin = v.todayClosed ? nextDateKey(v.today) : v.today;
+        start.min = startMin;
+        start.max = v.maxDate;
+        if (!start.value || start.value < startMin) start.value = startMin;
+        const end = document.getElementById("end-date");
+        end.min = startMin;
+        end.max = v.maxDate;
+        if (!end.value || end.value < startMin) end.value = startMin;
         const ul = document.getElementById("absence-list");
         ul.innerHTML = "";
         if (!v.absences.length) {
@@ -206,6 +218,7 @@
         };
         document.getElementById("student-logout").onclick = logoutStudent;
       }
+      setupNavigationFeedback();
     </script>
   </body>
 </html>

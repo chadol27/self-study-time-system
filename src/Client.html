@@ -24,6 +24,50 @@
     button.dataset.label ||= button.textContent;
     button.textContent = busy ? "처리 중…" : button.dataset.label;
   }
+  function setupNavigationFeedback() {
+    const links = Array.from(document.querySelectorAll("[data-loading-label]"));
+    if (!links.length) return;
+    const overlay = document.createElement("div");
+    overlay.className = "navigation-loading hidden";
+    overlay.setAttribute("role", "status");
+    overlay.setAttribute("aria-live", "polite");
+    overlay.innerHTML =
+      '<span class="loading-spinner" aria-hidden="true"></span><strong></strong>';
+    document.body.appendChild(overlay);
+    let navigating = false;
+    function reset() {
+      navigating = false;
+      overlay.classList.add("hidden");
+      links.forEach((link) => {
+        link.removeAttribute("aria-disabled");
+        if (link.dataset.originalLabel)
+          link.textContent = link.dataset.originalLabel;
+      });
+    }
+    links.forEach((link) => {
+      link.addEventListener("click", (event) => {
+        if (
+          event.button !== 0 ||
+          event.metaKey ||
+          event.ctrlKey ||
+          event.shiftKey ||
+          event.altKey
+        )
+          return;
+        if (navigating) return;
+        event.preventDefault();
+        navigating = true;
+        const label = link.dataset.loadingLabel;
+        link.dataset.originalLabel ||= link.textContent;
+        link.textContent = label;
+        links.forEach((item) => item.setAttribute("aria-disabled", "true"));
+        overlay.querySelector("strong").textContent = label;
+        overlay.classList.remove("hidden");
+        requestAnimationFrame(() => requestAnimationFrame(() => link.click()));
+      });
+    });
+    window.addEventListener("pageshow", reset);
+  }
   function message(el, text, type = "") {
     el.textContent = text;
     el.className = "notice" + (type ? " " + type : "");
