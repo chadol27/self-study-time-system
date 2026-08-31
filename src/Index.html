@@ -1,0 +1,10 @@
+<!doctype html><html lang="ko"><head><base target="_top"><?!= include('Styles'); ?></head><body><main>
+  <h1>스공시 좌석 및 출결 관리</h1>
+  <div id="config-error" class="notice error hidden"></div>
+  <section id="main-content" class="card stack">
+    <p class="muted">사용할 메뉴를 선택해 주세요.</p>
+    <div class="menu"><a class="button" href="<?= appUrl ?>?page=student">학생용</a><a class="button" href="<?= appUrl ?>?page=teacher">교사용</a></div>
+  </section>
+</main><script>const bootstrap = <?!= bootstrap ?>;</script><?!= include('Client'); ?><script>
+setupConfigGate('main-content','config-error');
+</script></body></html>

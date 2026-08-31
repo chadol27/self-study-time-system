@@ -1,0 +1,4 @@
+.clasp.json
+!*.example
+node_modules/
+.typecheck/

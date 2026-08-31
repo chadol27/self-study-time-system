@@ -1,0 +1,23 @@
+{
+  "name": "self-study-time-system",
+  "private": true,
+  "packageManager": "pnpm@11.21.0",
+  "scripts": {
+    "typecheck": "node scripts/typecheck.mjs",
+    "lint:gs": "eslint \"src/*.gs\"",
+    "lint:html": "node scripts/check-html.mjs",
+    "lint": "pnpm lint:gs && pnpm lint:html",
+    "check": "pnpm typecheck && pnpm lint",
+    "deploy": "pnpm check && clasp push",
+    "forcedeploy": "pnpm check && clasp push --force"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@google/clasp": "3.4.1",
+    "@types/google-apps-script": "2.0.12",
+    "eslint": "10.9.1",
+    "globals": "17.11.0",
+    "html-validate": "11.10.0",
+    "typescript": "^5.9.2"
+  }
+}

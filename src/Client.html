@@ -1,0 +1,8 @@
+<script>
+function callServer(name, ...args) { return new Promise((resolve, reject) => google.script.run.withSuccessHandler(resolve).withFailureHandler(reject)[name](...args)); }
+function unwrap(result) { if (!result || !result.ok) { const e = new Error(result?.error?.message || '처리 중 오류가 발생했습니다.'); e.code = result?.error?.code; e.details = result?.error?.details; throw e; } return result.data; }
+function setBusy(button, busy) { if (!button) return; button.disabled = busy; button.dataset.label ||= button.textContent; button.textContent = busy ? '처리 중…' : button.dataset.label; }
+function message(el, text, type='') { el.textContent = text; el.className = 'notice' + (type ? ' ' + type : ''); el.classList.toggle('hidden', !text); }
+function setupConfigGate(contentId, errorId) { if (bootstrap.configOk) return true; document.getElementById(contentId)?.classList.add('hidden'); const el=document.getElementById(errorId); if(el){el.classList.remove('hidden'); el.innerHTML='<strong>운영 설정이 필요합니다.</strong><br>Apps Script 편집기 → 프로젝트 설정 → 스크립트 속성에서 다음 키를 올바르게 입력하세요:<br>'+bootstrap.configErrors.map(escapeHtml).join(', ');} return false; }
+function escapeHtml(value){const d=document.createElement('div');d.textContent=String(value);return d.innerHTML}
+</script>
