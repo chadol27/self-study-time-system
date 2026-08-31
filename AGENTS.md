@@ -10,7 +10,8 @@
 
 - 이 저장소는 컨테이너 바운드 Google Apps Script 웹 앱이다. 의존성은 `pnpm install`로 설치한다.
 - Apps Script에 push되는 manifest, `.gs`, `.html` 파일은 모두 `src/`에 두며 `.clasp.json`의 `rootDir`을 `src`로 유지한다.
-- 검사는 `pnpm check`로 실행하며 순서는 `typecheck` → `lint:gs` → `lint:html`이다. 자동 테스트는 없고 실제 Apps Script 템플릿 평가와 런타임은 수동 검증 대상이다.
+- HTML, 인라인 CSS·JavaScript와 `.gs` 파일은 Prettier로 포맷한다. `pnpm format`은 `src/*.html`과 `src/*.gs`를 포맷하고 `pnpm format:check`는 포맷 상태를 검사한다.
+- 검사는 `pnpm check`로 실행하며 순서는 `typecheck` → `lint:gs` → `lint:html` → `format:check`이다. 자동 테스트는 없고 실제 Apps Script 템플릿 평가와 런타임은 수동 검증 대상이다.
 - `.clasp.json`은 로컬 전용이며 Script ID를 노출하거나 커밋하지 않는다. 배포 반영 명령은 검사 후 `clasp push`를 수행하는 `pnpm deploy`다.
 - 에이전트는 코드 변경 후 `pnpm check`나 `clasp push`를 직접 실행할 필요가 없다.
 - 날짜 계산은 시스템 로컬 시간 대신 `APP.TZ`와 `DateUtils.gs`를 사용하며 Apps Script와 스프레드시트 시간대를 `Asia/Seoul`로 유지한다.
@@ -207,6 +208,7 @@ Apps Script 시간 기반 트리거는 정확히 자정에 실행되지 않고 �
 - 같은 학번의 활성 행이 둘 이상이거나 비밀번호 데이터 형식이 잘못되었으면 로그인을 차단하고 오류를 안내한다.
 - 같은 학번의 비활성 과거 행이 존재하더라도 활성 행이 하나뿐이면 해당 활성 행으로 로그인한다.
 - 페이지를 새로고침하면 다시 로그인해야 한다.
+- 로그아웃하면 페이지를 새로고침하지 않고 학생 로그인 화면으로 돌아간다.
 - 별도의 로그인 시도 횟수 제한은 적용하지 않는다.
 
 ### 8.2 사전 결석 등록

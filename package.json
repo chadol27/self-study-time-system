@@ -7,7 +7,9 @@
     "lint:gs": "eslint \"src/*.gs\"",
     "lint:html": "node scripts/check-html.mjs",
     "lint": "pnpm lint:gs && pnpm lint:html",
-    "check": "pnpm typecheck && pnpm lint",
+    "format": "prettier --write \"src/*.html\" && prettier --write \"src/*.gs\" --parser babel",
+    "format:check": "prettier --check \"src/*.html\" && prettier --check \"src/*.gs\" --parser babel",
+    "check": "pnpm typecheck && pnpm lint && pnpm format:check",
     "deploy": "pnpm check && clasp push",
     "forcedeploy": "pnpm check && clasp push --force"
   },
@@ -18,6 +20,7 @@
     "eslint": "10.9.1",
     "globals": "17.11.0",
     "html-validate": "11.10.0",
+    "prettier": "^3.9.6",
     "typescript": "^5.9.2"
   }
 }

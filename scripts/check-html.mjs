@@ -17,7 +17,8 @@ function replaceScriptlets(source) {
   return source
     .replace(/<\?!=?\s*include\([^]*?\)\s*;?\s*\?>/g, '')
     .replace(/<\?=\s*appUrl\s*\?>/g, '/')
-    .replace(/<\?[^]*?\?>/g, 'null');
+    .replace(/<\?[^]*?\?>/g, 'null')
+    .replace(/^[ \t]+$/gm, '');
 }
 
 function extractScripts(source) {
@@ -35,7 +36,8 @@ const htmlValidate = new HtmlValidate({
   rules: {
     // HtmlService sets the title after template evaluation; lowercase doctype is valid HTML.
     'doctype-style': 'off',
-    'element-required-content': 'off'
+    'element-required-content': 'off',
+    'void-style': 'off',
   }
 });
 const linter = new Linter();
