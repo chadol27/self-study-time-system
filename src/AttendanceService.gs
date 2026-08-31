@@ -140,7 +140,7 @@ function studentView_(key, config, student) {
         if (
           normalizeStatus_(
             student.attendance[x.col - APP.ATTENDANCE_FIRST_COL + p - 1],
-          ) === "2"
+          ) === "4"
         )
           periods.push(p);
       if (periods.length)
@@ -204,8 +204,8 @@ function registerStudentAbsence(studentKey, startKey, endKey) {
         for (let p = 1; p <= 3; p++)
           if (isApplied_(student, key, p)) {
             const before = normalizeStatus_(values[p - 1]);
-            if (before !== "2" && before !== "3") {
-              values[p - 1] = 2;
+            if (before !== "2" && before !== "3" && before !== "4") {
+              values[p - 1] = 4;
               audits.push([
                 now_(),
                 "학생",
@@ -214,7 +214,7 @@ function registerStudentAbsence(studentKey, startKey, endKey) {
                 parseDateKey_(key),
                 p,
                 before,
-                "2",
+                "4",
               ]);
               changed = true;
             }
@@ -256,7 +256,7 @@ function cancelStudentAbsence(studentKey, key) {
       const range = attendanceCell_(student, info.col, 1).offset(0, 0, 1, 3);
       const values = range.getValues()[0];
       for (let p = 1; p <= 3; p++)
-        if (normalizeStatus_(values[p - 1]) === "2") {
+        if (normalizeStatus_(values[p - 1]) === "4") {
           values[p - 1] = restore;
           audits.push([
             now_(),
@@ -265,7 +265,7 @@ function cancelStudentAbsence(studentKey, key) {
             student.studentId,
             parseDateKey_(key),
             p,
-            "2",
+            "4",
             normalizeStatus_(restore),
           ]);
           count++;

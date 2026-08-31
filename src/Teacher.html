@@ -51,6 +51,17 @@
         </section>
         <section class="card">
           <div class="seat-wrap"><div id="seats" class="seats"></div></div>
+          <div id="batch-actions" class="batch-actions hidden">
+            <strong id="selected-count">0명 선택됨</strong>
+            <button id="mark-present" type="button">출석</button>
+            <button id="mark-absence" class="danger" type="button">결석</button>
+            <button id="restore" class="secondary" type="button">
+              되돌리기
+            </button>
+            <button id="clear-selection" class="secondary" type="button">
+              선택 해제
+            </button>
+          </div>
         </section>
       </section>
       <dialog id="seat-dialog">
@@ -62,11 +73,6 @@
             </button>
           </div>
           <div id="seat-detail"></div>
-          <div class="row">
-            <button id="mark-absence" class="danger" type="button">결석</button>
-            <button id="restore" class="secondary" type="button">출석</button>
-          </div>
-          <div id="dialog-message" class="notice hidden"></div>
         </div>
       </dialog>
     </main>
@@ -77,36 +83,69 @@
     <script>
       let token = localStorage.getItem("sgs_teacher_token"),
         current = null,
-        selected = null;
+        selectedKeys = new Set();
       function authFail() {
         localStorage.removeItem("sgs_teacher_token");
         token = null;
+        selectedKeys.clear();
         document.getElementById("teacher-content").classList.add("hidden");
         document.getElementById("teacher-login").classList.remove("hidden");
       }
       function renderSeats(v) {
         current = v;
+        selectedKeys.clear();
         const root = document.getElementById("seats");
         root.innerHTML = "";
         v.seats.forEach((s) => {
-          const b = document.createElement("button");
-          b.className = `seat ${s.status}`;
-          b.innerHTML = `<strong>${s.seat}번</strong>${s.student ? `<span>${escapeHtml(s.student.studentId)}</span><span>${escapeHtml(s.student.name)}</span><small>${escapeHtml(s.label)}</small>` : "<span>빈 좌석</span>"}`;
-          if (s.student) b.onclick = () => openSeat(s);
-          else b.disabled = true;
-          root.appendChild(b);
+          const slot = document.createElement("div");
+          slot.className = "seat-slot";
+          const seat = document.createElement("div");
+          seat.className = `seat ${s.status}`;
+          if (s.student) {
+            seat.dataset.studentKey = s.student.key;
+            seat.innerHTML = `<button class="seat-info" type="button" aria-label="${escapeHtml(s.student.name)} 학생 상세 정보">i</button><button class="seat-body" type="button" aria-pressed="false"><strong>${s.seat}번</strong><span>${escapeHtml(s.student.studentId)}</span><span>${escapeHtml(s.student.name)}</span><small>${escapeHtml(s.label)}</small></button>`;
+            seat.querySelector(".seat-body").onclick = () =>
+              toggleSeat(s.student.key);
+            seat.querySelector(".seat-info").onclick = (e) => {
+              e.stopPropagation();
+              openSeat(s);
+            };
+          } else {
+            seat.innerHTML = `<strong>${s.seat}번</strong><span>빈 좌석</span>`;
+          }
+          slot.appendChild(seat);
+          root.appendChild(slot);
         });
+        updateSelectionUi();
         const card = document.getElementById("validation-card");
         card.classList.toggle("hidden", !v.errors.length);
         document.getElementById("errors").innerHTML = v.errors
           .map(escapeHtml)
           .join("<br>");
       }
+      function toggleSeat(studentKey) {
+        if (selectedKeys.has(studentKey)) selectedKeys.delete(studentKey);
+        else selectedKeys.add(studentKey);
+        updateSelectionUi();
+      }
+      function updateSelectionUi() {
+        document.querySelectorAll(".seat[data-student-key]").forEach((seat) => {
+          const selected = selectedKeys.has(seat.dataset.studentKey);
+          seat.classList.toggle("selected", selected);
+          seat
+            .querySelector(".seat-body")
+            .setAttribute("aria-pressed", String(selected));
+        });
+        const count = selectedKeys.size;
+        document.getElementById("selected-count").textContent =
+          `${count}명 선택됨`;
+        document
+          .getElementById("batch-actions")
+          .classList.toggle("hidden", count === 0);
+      }
       function openSeat(s) {
-        selected = s;
         document.getElementById("seat-detail").innerHTML =
           `<p><strong>${escapeHtml(s.student.name)}</strong> (${escapeHtml(s.student.studentId)})</p><p>좌석: ${s.seat}번<br>신청 교시: ${s.appliedPeriods.join(", ")}교시<br>현재 상태: ${escapeHtml(s.label)}</p>`;
-        message(document.getElementById("dialog-message"), "");
         document.getElementById("seat-dialog").showModal();
       }
       async function loadSeats() {
@@ -130,34 +169,37 @@
           setBusy(b, false);
         }
       }
-      async function change(absent, button) {
+      async function change(action, button) {
+        if (!selectedKeys.size) return;
         setBusy(button, true);
+        document
+          .querySelectorAll("#batch-actions button")
+          .forEach((item) => (item.disabled = true));
         try {
-          const method = absent ? "teacherSetAbsence" : "teacherRestore";
           const d = unwrap(
             await callServer(
-              method,
+              "teacherBatchChange",
               token,
-              selected.student.key,
+              Array.from(selectedKeys),
               current.date,
               current.period,
+              action,
             ),
           );
           renderSeats(d.view);
-          document.getElementById("seat-dialog").close();
           message(
             document.getElementById("message"),
             `${d.changed}개 교시를 변경했습니다.`,
             "success",
           );
         } catch (e) {
-          message(
-            document.getElementById("dialog-message"),
-            e.message,
-            "error",
-          );
+          if (e.code?.startsWith("AUTH")) authFail();
+          else message(document.getElementById("message"), e.message, "error");
         } finally {
           setBusy(button, false);
+          document
+            .querySelectorAll("#batch-actions button")
+            .forEach((item) => (item.disabled = false));
         }
       }
       async function init() {
@@ -212,10 +254,16 @@
       document.getElementById("period").onchange = loadSeats;
       document.getElementById("close-dialog").onclick = () =>
         document.getElementById("seat-dialog").close();
+      document.getElementById("mark-present").onclick = (e) =>
+        change("present", e.currentTarget);
       document.getElementById("mark-absence").onclick = (e) =>
-        change(true, e.currentTarget);
+        change("absent", e.currentTarget);
       document.getElementById("restore").onclick = (e) =>
-        change(false, e.currentTarget);
+        change("restore", e.currentTarget);
+      document.getElementById("clear-selection").onclick = () => {
+        selectedKeys.clear();
+        updateSelectionUi();
+      };
       document.getElementById("logout").onclick = async () => {
         const oldToken = token;
         authFail();

@@ -333,7 +333,7 @@ function validateAll_() {
       }
     });
     s.attendance.forEach(function (v) {
-      if (!(v === "" || [0, 1, 2, 3].includes(Number(v)))) {
+      if (!(v === "" || [0, 1, 2, 3, 4].includes(Number(v)))) {
         errors.push("출결값 오류: " + s.studentId);
         excluded.add(s.key);
       }

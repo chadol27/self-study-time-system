@@ -83,16 +83,20 @@ function teacherSeats_(key, period) {
         : "";
       const status =
         raw === "2"
-          ? "student-absence"
+          ? "attended"
           : raw === "3"
-            ? "teacher-absence"
-            : "present";
+            ? "absent"
+            : raw === "4"
+              ? "pre-absence"
+              : "applied";
       const label =
         raw === "2"
-          ? "사전 결석"
+          ? "출석함"
           : raw === "3"
-            ? "교사 지정 결석"
-            : "출석 대상";
+            ? "결석함"
+            : raw === "4"
+              ? "미리 결석"
+              : "신청함";
       seats[s.seat - 1] = {
         seat: s.seat,
         student: { key: s.key, studentId: s.studentId, name: s.name },
@@ -111,80 +115,78 @@ function teacherSeats_(key, period) {
     totalSeats: config.totalSeats,
   };
 }
-function latestTeacherBefore_(student, key, period) {
-  const sheet = spreadsheet_().getSheetByName(APP.SHEETS.LOG);
-  if (sheet.getLastRow() < 2) return null;
-  const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, 8).getValues();
-  for (let i = rows.length - 1; i >= 0; i--) {
-    const rowKey = rows[i][4] instanceof Date ? dateKey_(rows[i][4]) : "";
-    if (
-      rows[i][1] === "교사" &&
-      String(rows[i][2]) === student.key &&
-      rowKey === key &&
-      Number(rows[i][5]) === period &&
-      normalizeStatus_(rows[i][7]) === "3"
-    )
-      return normalizeStatus_(rows[i][6]);
-  }
-  return null;
-}
-function teacherSetAbsence(token, studentKey, key, period) {
-  return teacherChange_(token, studentKey, key, period, true);
-}
-function teacherRestore(token, studentKey, key, period) {
-  return teacherChange_(token, studentKey, key, period, false);
-}
-function teacherChange_(token, studentKey, key, period, absent) {
+function teacherBatchChange(token, studentKeys, key, period, action) {
   return publicCall_(function () {
-    requireConfig_();
+    const config = requireConfig_();
     requireTeacher_(token);
     key = String(key);
     period = Number(period);
+    action = String(action);
     parseDateKey_(key);
     assertFutureRange_(key, true);
     if (!isOperatingDate_(key))
       throw userError_("미운영일은 변경할 수 없습니다.", "CLOSED_DATE");
     if (!Number.isInteger(period) || period < 1 || period > 3)
       throw userError_("교시가 올바르지 않습니다.", "INVALID_PERIOD");
+    if (!["present", "absent", "restore"].includes(action))
+      throw userError_("변경 작업이 올바르지 않습니다.", "INVALID_ACTION");
+    if (!Array.isArray(studentKeys))
+      throw userError_("학생을 선택해 주세요.", "INVALID_SELECTION");
+    const keys = Array.from(
+      new Set(
+        studentKeys.map(function (studentKey) {
+          return String(studentKey);
+        }),
+      ),
+    );
+    if (!keys.length || keys.length > config.totalSeats)
+      throw userError_("선택한 학생을 확인해 주세요.", "INVALID_SELECTION");
     return withWriteLock_(function () {
       requireTeacher_(token);
-      const student = readRoster_().find(function (s) {
-        return s.active && s.key === studentKey;
+      const selectedSet = new Set(keys);
+      const students = readRoster_().filter(function (s) {
+        return s.active && selectedSet.has(s.key);
       });
-      if (!student) throw userError_("학생을 찾을 수 없습니다.", "NOT_FOUND");
+      if (
+        students.length !== keys.length ||
+        students.some(function (student) {
+          return !isApplied_(student, key, period);
+        })
+      )
+        throw userError_(
+          "선택한 학생 정보를 다시 확인해 주세요.",
+          "INVALID_SELECTION",
+        );
       const col = ensureDateColumns_(key);
       let changed = 0;
       const audits = [];
-      const range = attendanceCell_(student, col, 1).offset(0, 0, 1, 3);
-      const values = range.getValues()[0];
-      for (let p = period; p <= 3; p++)
-        if (isApplied_(student, key, p)) {
-          const current = normalizeStatus_(values[p - 1]);
-          let next = current;
-          if (absent) next = "3";
-          else {
-            if (current === "3") {
-              const prior = latestTeacherBefore_(student, key, p);
-              const fallback = wasAutoProcessed_(key) ? "1" : "";
-              next = prior === null || prior === "3" ? fallback : prior;
+      students.forEach(function (student) {
+        const range = attendanceCell_(student, col, 1).offset(0, 0, 1, 3);
+        const values = range.getValues()[0];
+        let studentChanged = false;
+        for (let p = period; p <= 3; p++)
+          if (isApplied_(student, key, p)) {
+            const current = normalizeStatus_(values[p - 1]);
+            const next =
+              action === "present" ? "2" : action === "absent" ? "3" : "1";
+            if (current !== normalizeStatus_(next)) {
+              values[p - 1] = Number(next);
+              audits.push([
+                now_(),
+                "교사",
+                student.key,
+                student.studentId,
+                parseDateKey_(key),
+                p,
+                current,
+                normalizeStatus_(next),
+              ]);
+              changed++;
+              studentChanged = true;
             }
           }
-          if (current !== normalizeStatus_(next)) {
-            values[p - 1] = next === "" ? "" : Number(next);
-            audits.push([
-              now_(),
-              "교사",
-              student.key,
-              student.studentId,
-              parseDateKey_(key),
-              p,
-              current,
-              normalizeStatus_(next),
-            ]);
-            changed++;
-          }
-        }
-      if (changed) range.setValues([values]);
+        if (studentChanged) range.setValues([values]);
+      });
       appendAudits_(audits);
       return { changed: changed, view: teacherSeats_(key, period) };
     });
