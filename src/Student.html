@@ -74,11 +74,40 @@
     </script>
     <?!= include('Client'); ?>
     <script>
+      const STUDENT_LOGIN_DURATION_MS = 5 * 60 * 1000;
       let studentKey = null,
+        studentExpiresAt = 0,
+        studentExpiryTimer = null,
         view = null;
+      function logoutStudent() {
+        if (studentExpiryTimer) clearTimeout(studentExpiryTimer);
+        studentExpiryTimer = null;
+        studentKey = null;
+        studentExpiresAt = 0;
+        view = null;
+        document.getElementById("dashboard").classList.add("hidden");
+        document.getElementById("login").reset();
+        document.getElementById("login").classList.remove("hidden");
+        message(document.getElementById("login-message"), "");
+        message(document.getElementById("absence-message"), "");
+        document.getElementById("student-id").focus();
+      }
+      function hasActiveStudentLogin() {
+        if (studentKey && Date.now() < studentExpiresAt) return true;
+        logoutStudent();
+        return false;
+      }
+      function startStudentLogin(v) {
+        studentKey = v.studentKey;
+        studentExpiresAt = Date.now() + STUDENT_LOGIN_DURATION_MS;
+        studentExpiryTimer = setTimeout(
+          logoutStudent,
+          STUDENT_LOGIN_DURATION_MS,
+        );
+        render(v);
+      }
       function render(v) {
         view = v;
-        studentKey = v.studentKey;
         document.getElementById("login").classList.add("hidden");
         document.getElementById("dashboard").classList.remove("hidden");
         document.getElementById("identity").textContent =
@@ -102,13 +131,13 @@
           b.textContent = a.cancellable ? "취소" : "취소 불가";
           b.disabled = !a.cancellable;
           b.onclick = async () => {
+            if (!hasActiveStudentLogin()) return;
             setBusy(b, true);
             try {
-              render(
-                unwrap(
-                  await callServer("cancelStudentAbsence", studentKey, a.date),
-                ),
+              const nextView = unwrap(
+                await callServer("cancelStudentAbsence", studentKey, a.date),
               );
+              if (hasActiveStudentLogin()) render(nextView);
             } catch (e) {
               alert(e.message);
             } finally {
@@ -125,7 +154,7 @@
           const b = e.submitter;
           setBusy(b, true);
           try {
-            render(
+            startStudentLogin(
               unwrap(
                 await callServer(
                   "studentLogin",
@@ -146,6 +175,7 @@
         };
         document.getElementById("absence-form").onsubmit = async (e) => {
           e.preventDefault();
+          if (!hasActiveStudentLogin()) return;
           const b = e.submitter;
           setBusy(b, true);
           try {
@@ -157,6 +187,7 @@
                 document.getElementById("end-date").value,
               ),
             );
+            if (!hasActiveStudentLogin()) return;
             render(d);
             message(
               document.getElementById("absence-message"),
@@ -173,16 +204,7 @@
             setBusy(b, false);
           }
         };
-        document.getElementById("student-logout").onclick = () => {
-          studentKey = null;
-          view = null;
-          document.getElementById("dashboard").classList.add("hidden");
-          document.getElementById("login").reset();
-          document.getElementById("login").classList.remove("hidden");
-          message(document.getElementById("login-message"), "");
-          message(document.getElementById("absence-message"), "");
-          document.getElementById("student-id").focus();
-        };
+        document.getElementById("student-logout").onclick = logoutStudent;
       }
     </script>
   </body>
