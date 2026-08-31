@@ -1,7 +1,7 @@
 {
   "name": "self-study-time-system",
   "private": true,
-  "packageManager": "pnpm@11.21.0",
+  "packageManager": "pnpm@11.24.0",
   "scripts": {
     "typecheck": "node scripts/typecheck.mjs",
     "lint:gs": "eslint \"src/*.gs\"",
