@@ -1,6 +1,6 @@
 # 스공시 좌석 및 출결 관리 시스템
 
-Google Spreadsheet에 연결해 사용하는 컨테이너 바운드 Google Apps Script 웹 앱입니다. 상세 정책은 `PLAN.md`를 참고하세요.
+Google Spreadsheet에 연결해 사용하는 컨테이너 바운드 Google Apps Script 웹 앱입니다. 상세 정책은 `AGENTS.md`를 참고하세요.
 
 ## 설치
 
