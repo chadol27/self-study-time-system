@@ -13,7 +13,7 @@
 - HTML, 인라인 CSS·JavaScript와 `.gs` 파일은 Prettier로 포맷한다. `pnpm format`은 `src/*.html`과 `src/*.gs`를 포맷하고 `pnpm format:check`는 포맷 상태를 검사한다.
 - 검사는 `pnpm check`로 실행하며 순서는 `typecheck` → `lint:gs` → `lint:html` → `format:check`이다. 자동 테스트는 없고 실제 Apps Script 템플릿 평가와 런타임은 수동 검증 대상이다.
 - `.clasp.json`은 로컬 전용이며 Script ID를 노출하거나 커밋하지 않는다. 배포 반영 명령은 검사 후 `clasp push`를 수행하는 `pnpm deploy`다.
-- 에이전트는 코드 변경 후 `pnpm check`나 `clasp push`를 직접 실행할 필요가 없다.
+- 에이전트는 요청이 없으면 코드 변경 후 `pnpm check`나 `clasp push`를 직접 실행하지 않는다.
 - 날짜 계산은 시스템 로컬 시간 대신 `APP.TZ`와 `DateUtils.gs`를 사용하며 Apps Script와 스프레드시트 시간대를 `Asia/Seoul`로 유지한다.
 
 ## 코드 변경 원칙
