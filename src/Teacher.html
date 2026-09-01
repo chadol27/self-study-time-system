@@ -153,6 +153,9 @@
           if (s.student) {
             seat.dataset.studentKey = s.student.key;
             seat.innerHTML = `<strong class="seat-number">${s.seat}</strong><button class="seat-info" type="button" aria-label="${escapeHtml(s.student.name)} 학생 상세 정보">i</button><button class="seat-body" type="button" aria-pressed="false"><span>${escapeHtml(s.student.studentId)}</span><span>${escapeHtml(s.student.name)}</span><small>${escapeHtml(s.label)}</small></button>`;
+            seat
+              .querySelector(".seat-body")
+              .setAttribute("aria-disabled", String(v.readOnly));
             seat.querySelector(".seat-body").onclick = () =>
               toggleSeat(s.student.key);
             seat.querySelector(".seat-info").onclick = (e) => {
@@ -173,7 +176,7 @@
           .join("<br>");
       }
       function toggleSeat(studentKey) {
-        if (seatLoadCount) return;
+        if (seatLoadCount || current?.readOnly) return;
         if (selectedKeys.has(studentKey)) selectedKeys.delete(studentKey);
         else selectedKeys.add(studentKey);
         updateSelectionUi();
@@ -195,13 +198,15 @@
           selectableKeys.length > 0 &&
           selectableKeys.every((studentKey) => selectedKeys.has(studentKey));
         document.getElementById("selected-count").textContent =
-          `${count}명 선택됨`;
+          current?.readOnly ? "과거 날짜 · 조회 전용" : `${count}명 선택됨`;
         document
           .getElementById("batch-actions")
           .querySelectorAll("[data-requires-selection]")
-          .forEach((button) => (button.disabled = count === 0));
+          .forEach(
+            (button) => (button.disabled = current?.readOnly || count === 0),
+          );
         const toggle = document.getElementById("toggle-all-seats");
-        toggle.disabled = selectableKeys.length === 0;
+        toggle.disabled = current?.readOnly || selectableKeys.length === 0;
         toggle.textContent = allSelected ? "전체 해제" : "전체 선택";
       }
       function openSeat(s) {
@@ -236,7 +241,7 @@
         }
       }
       async function change(action, button) {
-        if (seatLoadCount || !selectedKeys.size) return;
+        if (seatLoadCount || current?.readOnly || !selectedKeys.size) return;
         setBusy(button, true);
         document
           .querySelectorAll("#batch-actions button")

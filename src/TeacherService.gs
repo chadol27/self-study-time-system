@@ -22,16 +22,17 @@ function teacherSchedule(token) {
   return publicCall_(function () {
     requireConfig_();
     requireTeacher_(token);
+    const today = todayKey_();
     const historical = getAttendanceColumns_()
       .map(function (x) {
         return x.key;
       })
       .filter(function (key) {
-        return key && isOperatingDate_(key);
+        return key && key < today;
       });
     const future = [];
     for (
-      let key = todayKey_(), max = addDays_(key, 30);
+      let key = today, max = addDays_(key, 30);
       key <= max;
       key = addDays_(key, 1)
     )
@@ -54,18 +55,18 @@ function teacherSeats_(key, period) {
   if (!Number.isInteger(period) || period < 1 || period > 3)
     throw userError_("교시가 올바르지 않습니다.", "INVALID_PERIOD");
   parseDateKey_(key);
-  if (!isOperatingDate_(key))
+  const today = todayKey_();
+  let info = getAttendanceColumns_().find(function (x) {
+    return x.key === key;
+  });
+  if (!isOperatingDate_(key) && !(key < today && info))
     throw userError_("미운영일은 조회할 수 없습니다.", "CLOSED_DATE");
-  if (key > addDays_(todayKey_(), 30))
+  if (key > addDays_(today, 30))
     throw userError_(
       "조회 가능한 미래 날짜를 벗어났습니다.",
       "DATE_OUT_OF_RANGE",
     );
-  let info = getAttendanceColumns_().find(function (x) {
-    return x.key === key;
-  });
-  if (!info && key >= todayKey_())
-    info = { key: key, col: ensureDateColumns_(key) };
+  if (!info && key >= today) info = { key: key, col: ensureDateColumns_(key) };
   const report = validateAll_();
   const excluded = new Set(report.excludedKeys);
   const seats = /** @type {any[]} */ (
@@ -121,6 +122,7 @@ function teacherSeats_(key, period) {
   return {
     date: key,
     period: period,
+    readOnly: key < todayKey_(),
     seats: seats,
     errors: report.errors,
     totalSeats: config.totalSeats,
@@ -134,7 +136,12 @@ function teacherBatchChange(token, studentKeys, key, period, action) {
     period = Number(period);
     action = String(action);
     parseDateKey_(key);
-    assertFutureRange_(key, true);
+    if (key < todayKey_())
+      throw userError_(
+        "과거 날짜는 수정할 수 없습니다.",
+        "PAST_DATE_READ_ONLY",
+      );
+    assertFutureRange_(key, false);
     if (!isOperatingDate_(key))
       throw userError_("미운영일은 변경할 수 없습니다.", "CLOSED_DATE");
     if (!Number.isInteger(period) || period < 1 || period > 3)
@@ -154,6 +161,11 @@ function teacherBatchChange(token, studentKeys, key, period, action) {
       throw userError_("선택한 학생을 확인해 주세요.", "INVALID_SELECTION");
     return withWriteLock_(function () {
       requireTeacher_(token);
+      if (key < todayKey_())
+        throw userError_(
+          "과거 날짜는 수정할 수 없습니다.",
+          "PAST_DATE_READ_ONLY",
+        );
       const selectedSet = new Set(keys);
       const students = readRoster_().filter(function (s) {
         return s.active && selectedSet.has(s.key);
