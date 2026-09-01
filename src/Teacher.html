@@ -152,7 +152,7 @@
           seat.className = `seat ${s.status}`;
           if (s.student) {
             seat.dataset.studentKey = s.student.key;
-            seat.innerHTML = `<button class="seat-info" type="button" aria-label="${escapeHtml(s.student.name)} 학생 상세 정보">i</button><button class="seat-body" type="button" aria-pressed="false"><strong>${s.seat}번</strong><span>${escapeHtml(s.student.studentId)}</span><span>${escapeHtml(s.student.name)}</span><small>${escapeHtml(s.label)}</small></button>`;
+            seat.innerHTML = `<strong class="seat-number">${s.seat}</strong><button class="seat-info" type="button" aria-label="${escapeHtml(s.student.name)} 학생 상세 정보">i</button><button class="seat-body" type="button" aria-pressed="false"><span>${escapeHtml(s.student.studentId)}</span><span>${escapeHtml(s.student.name)}</span><small>${escapeHtml(s.label)}</small></button>`;
             seat.querySelector(".seat-body").onclick = () =>
               toggleSeat(s.student.key);
             seat.querySelector(".seat-info").onclick = (e) => {
@@ -160,7 +160,7 @@
               openSeat(s);
             };
           } else {
-            seat.innerHTML = `<strong>${s.seat}번</strong><span>빈 좌석</span>`;
+            seat.innerHTML = `<strong class="seat-number">${s.seat}</strong><span>빈 좌석</span>`;
           }
           slot.appendChild(seat);
           root.appendChild(slot);
