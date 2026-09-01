@@ -104,11 +104,11 @@ function teacherSeats_(key, period) {
               : "applied";
       const label =
         raw === "2"
-          ? "출석함"
+          ? "출석"
           : raw === "3"
-            ? "결석함"
+            ? "결석"
             : raw === "4"
-              ? "미리 결석"
+              ? "결석 예정"
               : "신청함";
       seats[s.seat - 1] = {
         seat: s.seat,
