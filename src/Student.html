@@ -70,14 +70,24 @@
             <h2>등록된 결석일</h2>
             <div class="absence-actions">
               <strong id="selected-absence-count">0일 선택됨</strong>
-              <button
-                id="cancel-absences"
-                class="danger"
-                type="button"
-                disabled
-              >
-                선택한 결석 취소
-              </button>
+              <div class="absence-action-buttons">
+                <button
+                  id="toggle-all-absences"
+                  class="secondary"
+                  type="button"
+                  disabled
+                >
+                  전체 선택
+                </button>
+                <button
+                  id="cancel-absences"
+                  class="danger"
+                  type="button"
+                  disabled
+                >
+                  선택한 결석 취소
+                </button>
+              </div>
             </div>
             <ul id="absence-list" class="list"></ul>
           </section>
@@ -134,9 +144,19 @@
       }
       function updateAbsenceSelectionUi() {
         const count = selectedAbsenceDates().length;
+        const cancellable = Array.from(
+          document.querySelectorAll(
+            '#absence-list input[data-cancellable="true"]',
+          ),
+        );
+        const allSelected =
+          cancellable.length > 0 && cancellable.every((input) => input.checked);
         document.getElementById("selected-absence-count").textContent =
           `${count}일 선택됨`;
         document.getElementById("cancel-absences").disabled = count === 0;
+        const toggle = document.getElementById("toggle-all-absences");
+        toggle.disabled = cancellable.length === 0;
+        toggle.textContent = allSelected ? "전체 해제" : "전체 선택";
       }
       function render(v) {
         view = v;
@@ -241,6 +261,7 @@
             document.querySelectorAll("#absence-list input"),
           );
           setBusy(b, true);
+          document.getElementById("toggle-all-absences").disabled = true;
           checkboxes.forEach((input) => (input.disabled = true));
           try {
             const d = unwrap(
@@ -267,6 +288,16 @@
             setBusy(b, false);
             updateAbsenceSelectionUi();
           }
+        };
+        document.getElementById("toggle-all-absences").onclick = () => {
+          const cancellable = Array.from(
+            document.querySelectorAll(
+              '#absence-list input[data-cancellable="true"]',
+            ),
+          );
+          const selectAll = !cancellable.every((input) => input.checked);
+          cancellable.forEach((input) => (input.checked = selectAll));
+          updateAbsenceSelectionUi();
         };
         document.getElementById("student-logout").onclick = logoutStudent;
       }

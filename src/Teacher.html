@@ -60,20 +60,39 @@
         <section id="seat-card" class="card">
           <div id="batch-actions" class="batch-actions">
             <strong id="selected-count">0명 선택됨</strong>
-            <button id="mark-present" type="button" disabled>출석</button>
-            <button id="mark-absence" class="danger" type="button" disabled>
+            <button
+              id="mark-present"
+              type="button"
+              data-requires-selection
+              disabled
+            >
+              출석
+            </button>
+            <button
+              id="mark-absence"
+              class="danger"
+              type="button"
+              data-requires-selection
+              disabled
+            >
               결석
             </button>
-            <button id="restore" class="secondary" type="button" disabled>
+            <button
+              id="restore"
+              class="secondary"
+              type="button"
+              data-requires-selection
+              disabled
+            >
               되돌리기
             </button>
             <button
-              id="clear-selection"
+              id="toggle-all-seats"
               class="secondary"
               type="button"
               disabled
             >
-              선택 해제
+              전체 선택
             </button>
           </div>
           <div class="seat-wrap"><div id="seats" class="seats"></div></div>
@@ -168,12 +187,22 @@
             .setAttribute("aria-pressed", String(selected));
         });
         const count = selectedKeys.size;
+        const selectableKeys = Array.from(
+          document.querySelectorAll(".seat[data-student-key]"),
+          (seat) => seat.dataset.studentKey,
+        );
+        const allSelected =
+          selectableKeys.length > 0 &&
+          selectableKeys.every((studentKey) => selectedKeys.has(studentKey));
         document.getElementById("selected-count").textContent =
           `${count}명 선택됨`;
         document
           .getElementById("batch-actions")
-          .querySelectorAll("button")
+          .querySelectorAll("[data-requires-selection]")
           .forEach((button) => (button.disabled = count === 0));
+        const toggle = document.getElementById("toggle-all-seats");
+        toggle.disabled = selectableKeys.length === 0;
+        toggle.textContent = allSelected ? "전체 해제" : "전체 선택";
       }
       function openSeat(s) {
         if (seatLoadCount) return;
@@ -302,8 +331,17 @@
         change("absent", e.currentTarget);
       document.getElementById("restore").onclick = (e) =>
         change("restore", e.currentTarget);
-      document.getElementById("clear-selection").onclick = () => {
-        selectedKeys.clear();
+      document.getElementById("toggle-all-seats").onclick = () => {
+        const selectableKeys = Array.from(
+          document.querySelectorAll(".seat[data-student-key]"),
+          (seat) => seat.dataset.studentKey,
+        );
+        const selectAll = !selectableKeys.every((studentKey) =>
+          selectedKeys.has(studentKey),
+        );
+        if (selectAll)
+          selectableKeys.forEach((studentKey) => selectedKeys.add(studentKey));
+        else selectedKeys.clear();
         updateSelectionUi();
       };
       async function logoutTeacher() {
