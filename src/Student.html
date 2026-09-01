@@ -68,6 +68,17 @@
           </form>
           <section class="card">
             <h2>등록된 결석일</h2>
+            <div class="absence-actions">
+              <strong id="selected-absence-count">0일 선택됨</strong>
+              <button
+                id="cancel-absences"
+                class="danger"
+                type="button"
+                disabled
+              >
+                선택한 결석 취소
+              </button>
+            </div>
             <ul id="absence-list" class="list"></ul>
           </section>
         </div>
@@ -115,6 +126,18 @@
         date.setUTCDate(date.getUTCDate() + 1);
         return date.toISOString().slice(0, 10);
       }
+      function selectedAbsenceDates() {
+        return Array.from(
+          document.querySelectorAll("#absence-list input:checked"),
+          (input) => input.value,
+        );
+      }
+      function updateAbsenceSelectionUi() {
+        const count = selectedAbsenceDates().length;
+        document.getElementById("selected-absence-count").textContent =
+          `${count}일 선택됨`;
+        document.getElementById("cancel-absences").disabled = count === 0;
+      }
       function render(v) {
         view = v;
         document.getElementById("login").classList.add("hidden");
@@ -137,28 +160,21 @@
         }
         v.absences.forEach((a) => {
           const li = document.createElement("li");
-          li.innerHTML = `<strong>${escapeHtml(a.date)}</strong> · ${a.periods.join(", ")}교시 `;
-          const b = document.createElement("button");
-          b.className = "secondary";
-          b.textContent = a.cancellable ? "취소" : "취소 불가";
-          b.disabled = !a.cancellable;
-          b.onclick = async () => {
-            if (!hasActiveStudentLogin()) return;
-            setBusy(b, true);
-            try {
-              const nextView = unwrap(
-                await callServer("cancelStudentAbsence", studentKey, a.date),
-              );
-              if (hasActiveStudentLogin()) render(nextView);
-            } catch (e) {
-              alert(e.message);
-            } finally {
-              setBusy(b, false);
-            }
-          };
-          li.appendChild(b);
+          const label = document.createElement("label");
+          label.className = "absence-choice";
+          const input = document.createElement("input");
+          input.type = "checkbox";
+          input.value = a.date;
+          input.disabled = !a.cancellable;
+          input.dataset.cancellable = String(a.cancellable);
+          input.onchange = updateAbsenceSelectionUi;
+          const text = document.createElement("span");
+          text.innerHTML = `<strong>${escapeHtml(a.date)}</strong>${a.cancellable ? "" : '<small class="muted">취소 불가</small>'}`;
+          label.append(input, text);
+          li.appendChild(label);
           ul.appendChild(li);
         });
+        updateAbsenceSelectionUi();
       }
       if (setupConfigGate("student-content", "config-error")) {
         document.getElementById("login").onsubmit = async (e) => {
@@ -214,6 +230,42 @@
             );
           } finally {
             setBusy(b, false);
+          }
+        };
+        document.getElementById("cancel-absences").onclick = async (e) => {
+          if (!hasActiveStudentLogin()) return;
+          const b = e.currentTarget;
+          const dates = selectedAbsenceDates();
+          if (!dates.length) return;
+          const checkboxes = Array.from(
+            document.querySelectorAll("#absence-list input"),
+          );
+          setBusy(b, true);
+          checkboxes.forEach((input) => (input.disabled = true));
+          try {
+            const d = unwrap(
+              await callServer("cancelStudentAbsences", studentKey, dates),
+            );
+            if (!hasActiveStudentLogin()) return;
+            render(d);
+            message(
+              document.getElementById("absence-message"),
+              `${d.cancelledCount}일 취소했습니다: ${d.cancelledDates.join(", ")}`,
+              "success",
+            );
+          } catch (err) {
+            message(
+              document.getElementById("absence-message"),
+              err.message,
+              "error",
+            );
+          } finally {
+            checkboxes.forEach(
+              (input) =>
+                (input.disabled = input.dataset.cancellable !== "true"),
+            );
+            setBusy(b, false);
+            updateAbsenceSelectionUi();
           }
         };
         document.getElementById("student-logout").onclick = logoutStudent;

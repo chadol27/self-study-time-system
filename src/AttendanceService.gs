@@ -231,48 +231,92 @@ function registerStudentAbsence(studentKey, startKey, endKey) {
     });
   });
 }
-function cancelStudentAbsence(studentKey, key) {
+function cancelStudentAbsences(studentKey, dateKeys) {
   return publicCall_(function () {
     const config = requireConfig_();
-    key = String(key);
-    assertFutureRange_(key, false);
-    if (key === todayKey_() && isTodayStudentClosed_(config))
+    if (!Array.isArray(dateKeys))
+      throw userError_("취소할 결석일을 선택해 주세요.", "INVALID_DATES");
+    const keys = Array.from(
+      new Set(
+        dateKeys.map(function (key) {
+          return String(key);
+        }),
+      ),
+    ).sort();
+    if (!keys.length || keys.length > 31)
+      throw userError_("취소할 결석일을 선택해 주세요.", "INVALID_DATES");
+    keys.forEach(function (key) {
+      assertFutureRange_(key, false);
+    });
+    if (keys.includes(todayKey_()) && isTodayStudentClosed_(config))
       throw userError_("당일 등록이 마감되었습니다.", "TODAY_CLOSED");
     return withWriteLock_(function () {
       const student = requireStudent_(studentKey);
-      const info = getAttendanceColumns_().find(function (x) {
-        return x.key === key;
+      if (keys.includes(todayKey_()) && isTodayStudentClosed_(config))
+        throw userError_("당일 등록이 마감되었습니다.", "TODAY_CLOSED");
+      const columnsByKey = new Map();
+      getAttendanceColumns_().forEach(function (info) {
+        columnsByKey.set(info.key, info);
       });
-      if (!info) throw userError_("취소할 사전 결석이 없습니다.", "NOT_FOUND");
-      let count = 0;
-      const restore = wasAutoProcessed_(key) ? 1 : "";
-      const audits = [];
-      const range = attendanceCell_(student, info.col, 1).offset(0, 0, 1, 3);
+      const infos = keys.map(function (key) {
+        const info = columnsByKey.get(key);
+        if (!info)
+          throw userError_("취소할 사전 결석이 없습니다.", "NOT_FOUND");
+        return info;
+      });
+      const firstCol = Math.min.apply(
+        null,
+        infos.map(function (info) {
+          return info.col;
+        }),
+      );
+      const lastCol = Math.max.apply(
+        null,
+        infos.map(function (info) {
+          return info.col + 2;
+        }),
+      );
+      const range = spreadsheet_()
+        .getSheetByName(APP.SHEETS.ROSTER)
+        .getRange(student.row, firstCol, 1, lastCol - firstCol + 1);
       const values = range.getValues()[0];
-      for (let p = 1; p <= 3; p++)
-        if (normalizeStatus_(values[p - 1]) === "4") {
-          values[p - 1] = restore;
-          audits.push([
-            now_(),
-            "학생",
-            student.key,
-            student.studentId,
-            parseDateKey_(key),
-            p,
-            "4",
-            normalizeStatus_(restore),
-          ]);
-          count++;
+      const audits = [];
+      const cancelledDates = [];
+      const changedAt = now_();
+      infos.forEach(function (info) {
+        const restore = wasAutoProcessed_(info.key) ? 1 : "";
+        let dateChanged = false;
+        for (let p = 1; p <= 3; p++) {
+          const index = info.col - firstCol + p - 1;
+          if (normalizeStatus_(values[index]) === "4") {
+            values[index] = restore;
+            audits.push([
+              changedAt,
+              "학생",
+              student.key,
+              student.studentId,
+              parseDateKey_(info.key),
+              p,
+              "4",
+              normalizeStatus_(restore),
+            ]);
+            dateChanged = true;
+          }
         }
-      if (!count)
+        if (dateChanged) cancelledDates.push(info.key);
+      });
+      if (!cancelledDates.length)
         throw userError_("취소할 수 있는 사전 결석이 없습니다.", "NOT_FOUND");
       range.setValues([values]);
       appendAudits_(audits);
-      return studentView_(
+      const view = studentView_(
         studentKey,
         config,
         refreshStudentAttendance_(student),
       );
+      view.cancelledDates = cancelledDates;
+      view.cancelledCount = cancelledDates.length;
+      return view;
     });
   });
 }
