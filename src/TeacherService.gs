@@ -178,6 +178,9 @@ function teacherBatchChange(token, studentKeys, key, period, action) {
         for (let p = period; p <= 3; p++)
           if (isApplied_(student, key, p)) {
             const current = normalizeStatus_(values[p - 1]);
+            if (action === "absent" && current !== "1" && current !== "2")
+              continue;
+            if (action === "restore" && current === "4") continue;
             const next =
               action === "present" ? "2" : action === "absent" ? "3" : "1";
             if (current !== normalizeStatus_(next)) {
