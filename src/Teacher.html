@@ -58,18 +58,25 @@
           <div id="errors" class="errors"></div>
         </section>
         <section id="seat-card" class="card">
-          <div class="seat-wrap"><div id="seats" class="seats"></div></div>
-          <div id="batch-actions" class="batch-actions hidden">
+          <div id="batch-actions" class="batch-actions">
             <strong id="selected-count">0명 선택됨</strong>
-            <button id="mark-present" type="button">출석</button>
-            <button id="mark-absence" class="danger" type="button">결석</button>
-            <button id="restore" class="secondary" type="button">
+            <button id="mark-present" type="button" disabled>출석</button>
+            <button id="mark-absence" class="danger" type="button" disabled>
+              결석
+            </button>
+            <button id="restore" class="secondary" type="button" disabled>
               되돌리기
             </button>
-            <button id="clear-selection" class="secondary" type="button">
+            <button
+              id="clear-selection"
+              class="secondary"
+              type="button"
+              disabled
+            >
               선택 해제
             </button>
           </div>
+          <div class="seat-wrap"><div id="seats" class="seats"></div></div>
         </section>
       </section>
       <dialog id="seat-dialog">
@@ -165,12 +172,13 @@
           `${count}명 선택됨`;
         document
           .getElementById("batch-actions")
-          .classList.toggle("hidden", count === 0);
+          .querySelectorAll("button")
+          .forEach((button) => (button.disabled = count === 0));
       }
       function openSeat(s) {
         if (seatLoadCount) return;
         document.getElementById("seat-detail").innerHTML =
-          `<p><strong>${escapeHtml(s.student.name)}</strong> (${escapeHtml(s.student.studentId)})</p><p>좌석: ${s.seat}번<br>신청 교시: ${s.appliedPeriods.join(", ")}교시<br>현재 상태: ${escapeHtml(s.label)}</p>`;
+          `<p><strong>${escapeHtml(s.student.name)}</strong> (${escapeHtml(s.student.studentId)})</p><p>좌석: ${s.seat}번<br>전체 신청: ${escapeHtml(s.applicationSummary)}<br>현재 상태: ${escapeHtml(s.label)}</p>`;
         document.getElementById("seat-dialog").showModal();
       }
       async function loadSeats() {
@@ -226,9 +234,7 @@
           else message(document.getElementById("message"), e.message, "error");
         } finally {
           setBusy(button, false);
-          document
-            .querySelectorAll("#batch-actions button")
-            .forEach((item) => (item.disabled = false));
+          updateSelectionUi();
         }
       }
       async function init() {

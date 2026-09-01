@@ -78,6 +78,19 @@ function teacherSeats_(key, period) {
       return s.active && !excluded.has(s.key) && isApplied_(s, key, period);
     })
     .forEach(function (s) {
+      const applicationSummary = ["월", "화", "수", "목"]
+        .map(function (day, dayIndex) {
+          const periods = [1, 2, 3].filter(function (p) {
+            return Number(s.applications[dayIndex * 3 + p - 1]) === 1;
+          });
+          if (!periods.length) return "";
+          if (periods.length === 3) return day;
+          if (periods.length === 2 && periods[1] === periods[0] + 1)
+            return day + periods[0] + "-" + periods[1];
+          return day + periods.join(",");
+        })
+        .filter(Boolean)
+        .join(", ");
       const raw = info
         ? normalizeStatus_(attendanceCell_(s, info.col, period).getValue())
         : "";
@@ -102,9 +115,7 @@ function teacherSeats_(key, period) {
         student: { key: s.key, studentId: s.studentId, name: s.name },
         status: status,
         label: label,
-        appliedPeriods: [1, 2, 3].filter(function (p) {
-          return isApplied_(s, key, p);
-        }),
+        applicationSummary: applicationSummary,
       };
     });
   return {
