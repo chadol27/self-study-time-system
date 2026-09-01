@@ -24,7 +24,7 @@
     button.dataset.label ||= button.textContent;
     button.textContent = busy ? "처리 중…" : button.dataset.label;
   }
-  function setupNavigationFeedback() {
+  function setupNavigationFeedback(beforeNavigate) {
     const links = Array.from(document.querySelectorAll("[data-loading-label]"));
     if (!links.length) return;
     const overlay = document.createElement("div");
@@ -45,7 +45,7 @@
       });
     }
     links.forEach((link) => {
-      link.addEventListener("click", (event) => {
+      link.addEventListener("click", async (event) => {
         if (
           event.button !== 0 ||
           event.metaKey ||
@@ -63,6 +63,7 @@
         links.forEach((item) => item.setAttribute("aria-disabled", "true"));
         overlay.querySelector("strong").textContent = label;
         overlay.classList.remove("hidden");
+        if (beforeNavigate) await beforeNavigate(link);
         requestAnimationFrame(() => requestAnimationFrame(() => link.click()));
       });
     });

@@ -306,12 +306,18 @@
         selectedKeys.clear();
         updateSelectionUi();
       };
-      document.getElementById("logout").onclick = async () => {
+      async function logoutTeacher() {
         const oldToken = token;
         authFail();
-        if (oldToken) await callServer("teacherLogout", oldToken);
-      };
-      setupNavigationFeedback();
+        if (oldToken)
+          try {
+            await callServer("teacherLogout", oldToken);
+          } catch (_) {
+            // The browser token has already been cleared.
+          }
+      }
+      document.getElementById("logout").onclick = logoutTeacher;
+      setupNavigationFeedback(logoutTeacher);
       init();
     </script>
   </body>
