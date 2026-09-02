@@ -168,7 +168,7 @@ function teacherBatchChange(token, studentKeys, key, period, action) {
         );
       const selectedSet = new Set(keys);
       const students = readRoster_().filter(function (s) {
-        return s.active && selectedSet.has(s.key);
+        return s.active && s.directoryValid && selectedSet.has(s.key);
       });
       if (
         students.length !== keys.length ||

@@ -39,6 +39,7 @@ function onOpen() {
   SpreadsheetApp.getUi()
     .createMenu("스공시 관리")
     .addItem("시트 초기화 및 검사", "initializeAndValidate")
+    .addItem("학생 명단 적용", "applyStudentDirectory")
     .addItem("일일 트리거 설치", "installDailyTrigger")
     .addToUi();
 }

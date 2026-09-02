@@ -1,9 +1,14 @@
 const APP = Object.freeze({
   TZ: "Asia/Seoul",
-  SHEETS: Object.freeze({ ROSTER: "명부", LOG: "기록", SETTINGS: "설정" }),
+  SHEETS: Object.freeze({
+    ROSTER: "명부",
+    STUDENT_DIRECTORY: "학생명단",
+    LOG: "기록",
+    SETTINGS: "설정",
+  }),
   ROSTER_FIRST_DATA_ROW: 3,
-  ATTENDANCE_FIRST_COL: 18,
-  STUDENT_KEY_COL: 17,
+  ATTENDANCE_FIRST_COL: 16,
+  STUDENT_KEY_COL: 15,
   MAX_FUTURE_DAYS: 30,
   PERIODS: 3,
   REQUIRED_PROPERTIES: Object.freeze([
@@ -15,9 +20,7 @@ const APP = Object.freeze({
   ]),
   ROSTER_HEADERS_1: Object.freeze([
     "학번",
-    "이름",
     "좌석번호",
-    "전화번호 뒤 4자리",
     "월요일",
     "",
     "",
@@ -34,9 +37,7 @@ const APP = Object.freeze({
   ]),
   ROSTER_HEADERS_2: Object.freeze([
     "학번",
-    "이름",
     "좌석번호",
-    "전화번호 뒤 4자리",
     "1교시",
     "2교시",
     "3교시",
@@ -50,6 +51,11 @@ const APP = Object.freeze({
     "2교시",
     "3교시",
     "내부 학생 키",
+  ]),
+  STUDENT_DIRECTORY_HEADERS: Object.freeze([
+    "학번",
+    "이름",
+    "전화번호 뒤 4자리",
   ]),
   LOG_HEADERS: Object.freeze([
     "변경 시각",

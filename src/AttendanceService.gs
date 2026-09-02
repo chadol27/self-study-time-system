@@ -109,6 +109,7 @@ function catchUpToday_() {
 function dailyAttendanceJob() {
   initializeSheets_();
   requireConfig_();
+  refreshStudentDirectoryCache_();
   return syncFutureAttendanceColumns_();
 }
 

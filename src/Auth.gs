@@ -70,7 +70,7 @@ function studentLogin(studentId, pin) {
         "LOGIN_FAILED",
       );
     const active = readRoster_().filter(function (s) {
-      return s.active && s.studentId === id;
+      return s.active && s.directoryValid && s.studentId === id;
     });
     if (
       active.length !== 1 ||
@@ -85,7 +85,7 @@ function requireStudent_(key) {
   if (!key || typeof key !== "string")
     throw userError_("다시 로그인해 주세요.", "AUTH_REQUIRED");
   const matches = readRoster_().filter(function (s) {
-    return s.active && s.key === key;
+    return s.active && s.directoryValid && s.key === key;
   });
   if (matches.length !== 1)
     throw userError_(

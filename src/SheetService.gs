@@ -17,10 +17,17 @@ function initializeSheets_() {
     }
     const log =
       ss.getSheetByName(APP.SHEETS.LOG) || ss.insertSheet(APP.SHEETS.LOG);
+    const studentDirectory =
+      ss.getSheetByName(APP.SHEETS.STUDENT_DIRECTORY) ||
+      ss.insertSheet(APP.SHEETS.STUDENT_DIRECTORY);
     const settings =
       ss.getSheetByName(APP.SHEETS.SETTINGS) ||
       ss.insertSheet(APP.SHEETS.SETTINGS);
     if (roster.getLastRow() === 0) setupRoster_(roster);
+    if (studentDirectory.getLastRow() === 0) {
+      setupSimpleSheet_(studentDirectory, APP.STUDENT_DIRECTORY_HEADERS);
+      studentDirectory.getRange("A:C").setNumberFormat("@");
+    }
     if (log.getLastRow() === 0) setupSimpleSheet_(log, APP.LOG_HEADERS);
     if (settings.getLastRow() === 0)
       setupSimpleSheet_(settings, APP.SETTINGS_HEADERS);
@@ -32,13 +39,13 @@ function initializeSheets_() {
 
 function setupRoster_(sheet) {
   sheet
-    .getRange(1, 1, 2, 17)
+    .getRange(1, 1, 2, APP.STUDENT_KEY_COL)
     .setValues([APP.ROSTER_HEADERS_1.slice(), APP.ROSTER_HEADERS_2.slice()]);
   sheet.setFrozenRows(2);
   sheet.hideColumns(APP.STUDENT_KEY_COL);
-  sheet.getRange("A:D").setNumberFormat("@");
+  sheet.getRange("A:A").setNumberFormat("@");
   sheet
-    .getRange(1, 1, 2, 17)
+    .getRange(1, 1, 2, APP.STUDENT_KEY_COL)
     .setFontWeight("bold")
     .setHorizontalAlignment("center");
 }
@@ -58,21 +65,23 @@ function ensureStudentKeys_() {
     const sheet = spreadsheet_().getSheetByName(APP.SHEETS.ROSTER);
     if (!sheet || sheet.getLastRow() < APP.ROSTER_FIRST_DATA_ROW) return;
     const count = sheet.getLastRow() - 2;
-    const rows = sheet.getRange(3, 1, count, 17).getDisplayValues();
+    const rows = sheet
+      .getRange(3, 1, count, APP.STUDENT_KEY_COL)
+      .getDisplayValues();
     const keys = new Set(
       rows
         .map(function (r) {
-          return r[16];
+          return r[APP.STUDENT_KEY_COL - 1];
         })
         .filter(Boolean),
     );
     const writes = [];
     rows.forEach(function (row, i) {
       if (
-        row.slice(0, 16).some(function (v) {
+        row.slice(0, APP.STUDENT_KEY_COL - 1).some(function (v) {
           return v !== "";
         }) &&
-        !row[16]
+        !row[APP.STUDENT_KEY_COL - 1]
       ) {
         let key;
         do {
@@ -83,9 +92,10 @@ function ensureStudentKeys_() {
       }
     });
     writes.forEach(function (w) {
-      sheet.getRange(w.row, 17).setValue(w.key);
+      sheet.getRange(w.row, APP.STUDENT_KEY_COL).setValue(w.key);
     });
-    if (!sheet.isColumnHiddenByUser(17)) sheet.hideColumns(17);
+    if (!sheet.isColumnHiddenByUser(APP.STUDENT_KEY_COL))
+      sheet.hideColumns(APP.STUDENT_KEY_COL);
   } finally {
     lock.releaseLock();
   }
@@ -93,9 +103,15 @@ function ensureStudentKeys_() {
 
 function headersValid_() {
   const sheet = spreadsheet_().getSheetByName(APP.SHEETS.ROSTER);
-  if (!sheet || sheet.getMaxColumns() < 17 || sheet.getMaxRows() < 2)
+  if (
+    !sheet ||
+    sheet.getMaxColumns() < APP.STUDENT_KEY_COL ||
+    sheet.getMaxRows() < 2
+  )
     return false;
-  const values = sheet.getRange(1, 1, 2, 17).getDisplayValues();
+  const values = sheet
+    .getRange(1, 1, 2, APP.STUDENT_KEY_COL)
+    .getDisplayValues();
   return (
     APP.ROSTER_HEADERS_1.every(function (v, i) {
       return values[0][i] === v;
@@ -179,28 +195,35 @@ function readRoster_() {
   const sheet = spreadsheet_().getSheetByName(APP.SHEETS.ROSTER);
   const lastRow = sheet.getLastRow();
   if (lastRow < 3) return [];
-  const width = Math.max(17, sheet.getLastColumn());
+  const width = Math.max(APP.STUDENT_KEY_COL, sheet.getLastColumn());
   const raw = sheet.getRange(3, 1, lastRow - 2, width).getValues();
   const display = sheet.getRange(3, 1, lastRow - 2, width).getDisplayValues();
+  const studentIds = display.map(function (row) {
+    return row[0].trim();
+  });
+  const directory = getStudentDirectoryForIds_(studentIds);
   return raw
     .map(function (r, i) {
+      const studentId = display[i][0].trim();
+      const identity = directory.students[studentId] || null;
       return {
         row: i + 3,
-        studentId: display[i][0].trim(),
-        name: display[i][1].trim(),
-        seatRaw: r[2],
-        seat: Number(r[2]),
-        pin: display[i][3],
-        applications: r.slice(4, 16),
-        key: display[i][16],
-        attendance: r.slice(17),
-        active: r.slice(4, 16).some(function (v) {
+        studentId: studentId,
+        name: identity ? identity.name : "",
+        seatRaw: r[1],
+        seat: Number(r[1]),
+        pin: identity ? identity.pin : "",
+        directoryValid: Boolean(identity),
+        applications: r.slice(2, 14),
+        key: display[i][APP.STUDENT_KEY_COL - 1],
+        attendance: r.slice(APP.ATTENDANCE_FIRST_COL - 1),
+        active: r.slice(2, 14).some(function (v) {
           return v !== "";
         }),
       };
     })
     .filter(function (s) {
-      return s.studentId || s.name || s.key || s.active;
+      return s.studentId || s.key || s.active;
     });
 }
 
@@ -255,16 +278,23 @@ function validateAll_() {
   const config = getConfig_();
   if (!config.ok)
     errors.push("Script Properties 오류: " + config.errors.join(", "));
-  [APP.SHEETS.ROSTER, APP.SHEETS.LOG, APP.SHEETS.SETTINGS].forEach(
-    function (n) {
-      if (!spreadsheet_().getSheetByName(n))
-        errors.push(n + " 시트가 없습니다.");
-    },
-  );
+  [
+    APP.SHEETS.ROSTER,
+    APP.SHEETS.STUDENT_DIRECTORY,
+    APP.SHEETS.LOG,
+    APP.SHEETS.SETTINGS,
+  ].forEach(function (n) {
+    if (!spreadsheet_().getSheetByName(n)) errors.push(n + " 시트가 없습니다.");
+  });
   if (!headersValid_())
     errors.push("명부 시트의 고정 헤더가 올바르지 않습니다.");
   const logSheet = spreadsheet_().getSheetByName(APP.SHEETS.LOG);
+  const directorySheet = spreadsheet_().getSheetByName(
+    APP.SHEETS.STUDENT_DIRECTORY,
+  );
   const settingsSheet = spreadsheet_().getSheetByName(APP.SHEETS.SETTINGS);
+  if (!simpleHeadersValid_(directorySheet, APP.STUDENT_DIRECTORY_HEADERS))
+    errors.push("학생명단 시트 헤더가 올바르지 않습니다.");
   if (
     logSheet &&
     (logSheet.getMaxColumns() < APP.LOG_HEADERS.length ||
@@ -290,6 +320,8 @@ function validateAll_() {
   if (!config.ok || !headersValid_())
     return { errors: errors, excludedKeys: [] };
   const students = readRoster_();
+  const directory = getStudentDirectory_();
+  Array.prototype.push.apply(errors, directory.errors);
   const excluded = new Set();
   const activeIds = {};
   const keys = {};
@@ -308,8 +340,8 @@ function validateAll_() {
       if (!activeIds[s.studentId]) activeIds[s.studentId] = [];
       activeIds[s.studentId].push(s);
     }
-    if (!/^\d{4}$/.test(s.pin)) {
-      errors.push("전화번호 뒤 4자리 형식 오류: " + s.studentId);
+    if (!s.directoryValid) {
+      errors.push("학생명단에 유효한 학번이 없습니다: " + s.studentId);
       excluded.add(s.key);
     }
     if (!Number.isInteger(s.seat) || s.seat < 1 || s.seat > config.totalSeats) {
@@ -390,4 +422,17 @@ function validateAll_() {
     if (cols[i - 1].key >= cols[i].key)
       errors.push("출결 날짜 헤더가 중복되었거나 시간순이 아닙니다.");
   return { errors: errors, excludedKeys: Array.from(excluded) };
+}
+
+function simpleHeadersValid_(sheet, headers) {
+  return Boolean(
+    sheet &&
+    sheet.getMaxColumns() >= headers.length &&
+    sheet
+      .getRange(1, 1, 1, headers.length)
+      .getDisplayValues()[0]
+      .every(function (value, i) {
+        return value === headers[i];
+      }),
+  );
 }
