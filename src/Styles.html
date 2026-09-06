@@ -376,6 +376,64 @@
   .batch-actions strong {
     margin-right: auto;
   }
+  .extra-actions,
+  .extra-results,
+  .extra-item {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+  }
+  .extra-actions strong {
+    margin-right: auto;
+  }
+  .extra-results {
+    max-height: 280px;
+    overflow-y: auto;
+  }
+  .extra-list .extra-item {
+    padding: 12px;
+    border: 2px solid #dce3ed;
+    border-radius: 10px;
+    margin-bottom: 8px;
+  }
+  .extra-list .extra-selected {
+    border-color: var(--blue);
+    background: #eaf1ff;
+  }
+  .extra-choice {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-height: 46px;
+    flex: 1 1 180px;
+    overflow-wrap: anywhere;
+  }
+  .extra-choice input {
+    width: 22px;
+    min-height: 22px;
+    flex: 0 0 auto;
+  }
+  .extra-badge {
+    border-radius: 8px;
+    padding: 6px 10px;
+    background: var(--gray);
+  }
+  .extra-present {
+    background: var(--green);
+    color: #175d27;
+  }
+  .extra-absent {
+    background: #ffd8d8;
+    color: #731717;
+  }
+  .extra-failure {
+    flex-basis: 100%;
+    color: #8e1010;
+  }
+  #extra-message {
+    white-space: pre-line;
+  }
   dialog {
     border: 0;
     border-radius: 16px;

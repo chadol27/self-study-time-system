@@ -5,6 +5,7 @@ const APP = Object.freeze({
     STUDENT_DIRECTORY: "학생명단",
     LOG: "기록",
     SETTINGS: "설정",
+    EXTRAS: "미신청자",
   }),
   ROSTER_FIRST_DATA_ROW: 3,
   ATTENDANCE_FIRST_COL: 16,

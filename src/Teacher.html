@@ -97,6 +97,52 @@
           </div>
           <div class="seat-wrap"><div id="seats" class="seats"></div></div>
         </section>
+        <section
+          id="extra-card"
+          class="card stack"
+          aria-labelledby="extra-title"
+        >
+          <h2 id="extra-title">미신청자</h2>
+          <p class="muted">
+            좌석 출결과 별도로 기록됩니다. 신청 학생도 추가할 수 있습니다. 오늘
+            운영일만 수정 가능하며, 선택한 교시에만 적용됩니다.
+          </p>
+          <label>
+            이름 또는 학번 검색
+            <input
+              id="extra-search"
+              type="search"
+              autocomplete="off"
+              placeholder="이름 또는 학번 입력"
+            />
+          </label>
+          <div id="extra-search-status" class="muted" role="status"></div>
+          <div id="extra-results" class="extra-results"></div>
+          <div id="extra-message" class="notice hidden" role="status"></div>
+          <div class="extra-actions">
+            <strong id="extra-count">0명 선택됨</strong>
+            <button id="extra-all" type="button" class="secondary">
+              전체 선택
+            </button>
+            <button type="button" data-extra-action="present">출석</button>
+            <button type="button" data-extra-action="absent" class="danger">
+              결석
+            </button>
+            <button type="button" data-extra-action="restore" class="secondary">
+              되돌리기
+            </button>
+            <button type="button" data-extra-action="remove" class="secondary">
+              목록에서 제거
+            </button>
+          </div>
+          <p class="muted">
+            되돌리기는 선택 교시를 빈 값으로 지웁니다. 목록 제거는 1~3교시가
+            모두 빈 값일 때만 가능합니다. 일괄 변경은 학생별로 저장되어 일부만
+            성공할 수 있으며, 실패한 학생은 목록에서 확인하고 다시 처리하세요.
+          </p>
+          <div id="extra-status" class="muted" role="status"></div>
+          <ul id="extra-list" class="list extra-list"></ul>
+        </section>
       </section>
       <dialog id="seat-dialog">
         <div class="card stack">
@@ -115,10 +161,13 @@
     </script>
     <?!= include('Client'); ?>
     <script>
+      /* global resetExtras, loadExtraDirectory, loadExtras, confirmExtraLeave */
       let token = localStorage.getItem("sgs_teacher_token"),
         current = null,
         selectedKeys = new Set(),
-        seatLoadCount = 0;
+        seatLoadCount = 0,
+        teacherEpoch = 0,
+        seatRequest = 0;
       function setTeacherLoading(loading) {
         document
           .getElementById("teacher-loading")
@@ -133,9 +182,32 @@
         card.classList.toggle("loading", busy);
       }
       function authFail() {
+        teacherEpoch++;
+        seatRequest++;
+        resetExtras();
         localStorage.removeItem("sgs_teacher_token");
         token = null;
+        current = null;
+        seatLoadCount = 0;
+        setSeatsLoading(false);
+        document.getElementById("seats").replaceChildren();
+        document.getElementById("seat-detail").replaceChildren();
+        document.getElementById("seat-dialog").close();
+        document.getElementById("password").value = "";
+        document.getElementById("errors").replaceChildren();
+        document.getElementById("validation-card").classList.add("hidden");
+        message(document.getElementById("message"), "");
+        message(document.getElementById("login-message"), "");
+        setBusy(
+          document.querySelector("#teacher-login button[type=submit]"),
+          false,
+        );
+        setBusy(document.getElementById("refresh"), false);
+        document
+          .querySelectorAll("#batch-actions button")
+          .forEach((button) => setBusy(button, false));
         selectedKeys.clear();
+        updateSelectionUi();
         setTeacherLoading(false);
         document.getElementById("teacher-content").classList.add("hidden");
         document.getElementById("teacher-login").classList.remove("hidden");
@@ -176,7 +248,7 @@
           .join("<br>");
       }
       function toggleSeat(studentKey) {
-        if (seatLoadCount || current?.readOnly) return;
+        if (seatLoadCount || !current || current.readOnly) return;
         if (selectedKeys.has(studentKey)) selectedKeys.delete(studentKey);
         else selectedKeys.add(studentKey);
         updateSelectionUi();
@@ -198,50 +270,71 @@
           selectableKeys.length > 0 &&
           selectableKeys.every((studentKey) => selectedKeys.has(studentKey));
         document.getElementById("selected-count").textContent =
-          current?.readOnly ? "과거 날짜 · 조회 전용" : `${count}명 선택됨`;
+          current?.readOnly
+            ? "오늘만 수정 가능 · 조회 전용"
+            : `${count}명 선택됨`;
         document
           .getElementById("batch-actions")
           .querySelectorAll("[data-requires-selection]")
           .forEach(
-            (button) => (button.disabled = current?.readOnly || count === 0),
+            (button) =>
+              (button.disabled =
+                seatLoadCount > 0 ||
+                !current ||
+                current.readOnly ||
+                count === 0),
           );
         const toggle = document.getElementById("toggle-all-seats");
-        toggle.disabled = current?.readOnly || selectableKeys.length === 0;
+        toggle.disabled =
+          seatLoadCount > 0 ||
+          !current ||
+          current.readOnly ||
+          selectableKeys.length === 0;
         toggle.textContent = allSelected ? "전체 해제" : "전체 선택";
       }
       function openSeat(s) {
-        if (seatLoadCount) return;
+        if (seatLoadCount || !current) return;
         document.getElementById("seat-detail").innerHTML =
           `<p><strong>${escapeHtml(s.student.name)}</strong> (${escapeHtml(s.student.studentId)})</p><p>좌석: ${s.seat}번<br>전체 신청: ${escapeHtml(s.applicationSummary)}<br>현재 상태: ${escapeHtml(s.label)}</p>`;
         document.getElementById("seat-dialog").showModal();
       }
       async function loadSeats() {
+        const epoch = teacherEpoch;
+        const request = ++seatRequest;
+        const date = document.getElementById("date").value;
+        const period = Number(document.getElementById("period").value);
+        current = null;
+        selectedKeys.clear();
         const b = document.getElementById("refresh");
         const dialog = document.getElementById("seat-dialog");
         if (dialog.open) dialog.close();
         setSeatsLoading(true);
         setBusy(b, true);
         try {
-          renderSeats(
-            unwrap(
-              await callServer(
-                "getTeacherSeats",
-                token,
-                document.getElementById("date").value,
-                Number(document.getElementById("period").value),
-              ),
-            ),
+          const view = unwrap(
+            await callServer("getTeacherSeats", token, date, period),
           );
+          if (epoch === teacherEpoch && request === seatRequest)
+            renderSeats(view);
         } catch (e) {
+          if (epoch !== teacherEpoch) return;
           if (e.code?.startsWith("AUTH")) authFail();
-          else message(document.getElementById("message"), e.message, "error");
+          else if (request === seatRequest)
+            message(document.getElementById("message"), e.message, "error");
         } finally {
-          setBusy(b, false);
-          setSeatsLoading(false);
+          if (epoch === teacherEpoch) {
+            setSeatsLoading(false);
+            setBusy(b, seatLoadCount > 0);
+            updateSelectionUi();
+          }
         }
       }
       async function change(action, button) {
-        if (seatLoadCount || current?.readOnly || !selectedKeys.size) return;
+        if (seatLoadCount || !current || current.readOnly || !selectedKeys.size)
+          return;
+        const epoch = teacherEpoch;
+        const request = seatRequest;
+        setSeatsLoading(true);
         setBusy(button, true);
         document
           .querySelectorAll("#batch-actions button")
@@ -257,6 +350,7 @@
               action,
             ),
           );
+          if (epoch !== teacherEpoch || request !== seatRequest) return;
           renderSeats(d.view);
           message(
             document.getElementById("message"),
@@ -264,14 +358,20 @@
             "success",
           );
         } catch (e) {
+          if (epoch !== teacherEpoch) return;
           if (e.code?.startsWith("AUTH")) authFail();
-          else message(document.getElementById("message"), e.message, "error");
+          else if (request === seatRequest)
+            message(document.getElementById("message"), e.message, "error");
         } finally {
-          setBusy(button, false);
-          updateSelectionUi();
+          if (epoch === teacherEpoch) {
+            setSeatsLoading(false);
+            setBusy(button, false);
+            updateSelectionUi();
+          }
         }
       }
       async function init() {
+        const epoch = teacherEpoch;
         setTeacherLoading(true);
         document.getElementById("teacher-login").classList.add("hidden");
         document.getElementById("teacher-content").classList.add("hidden");
@@ -280,11 +380,13 @@
           return;
         }
         if (!token) return authFail();
+        void loadExtraDirectory();
         try {
           const [base, dates] = await Promise.all([
             callServer("teacherBootstrap", token),
             callServer("teacherSchedule", token),
           ]).then((x) => x.map(unwrap));
+          if (epoch !== teacherEpoch) return;
           const sel = document.getElementById("date");
           sel.innerHTML = "";
           dates.forEach((d) => sel.add(new Option(d, d)));
@@ -292,16 +394,16 @@
             sel.add(new Option(base.defaultDate, base.defaultDate));
           sel.value = base.defaultDate;
           document.getElementById("period").value = String(base.defaultPeriod);
-          await loadSeats();
-          if (!token) return;
           setTeacherLoading(false);
           document.getElementById("teacher-content").classList.remove("hidden");
+          await Promise.all([loadSeats(), loadExtras()]);
         } catch (e) {
-          authFail();
+          if (epoch === teacherEpoch) authFail();
         }
       }
       document.getElementById("teacher-login").onsubmit = async (e) => {
         e.preventDefault();
+        const epoch = teacherEpoch;
         const b = e.submitter;
         setBusy(b, true);
         try {
@@ -311,23 +413,29 @@
               document.getElementById("password").value,
             ),
           );
+          if (epoch !== teacherEpoch) return;
           token = d.token;
           localStorage.setItem("sgs_teacher_token", token);
           document.getElementById("password").value = "";
           await init();
         } catch (err) {
+          if (epoch !== teacherEpoch) return;
           message(
             document.getElementById("login-message"),
             err.message,
             "error",
           );
         } finally {
-          setBusy(b, false);
+          if (epoch === teacherEpoch) setBusy(b, false);
         }
       };
-      document.getElementById("refresh").onclick = loadSeats;
-      document.getElementById("date").onchange = loadSeats;
-      document.getElementById("period").onchange = loadSeats;
+      function loadTeacherViews() {
+        void loadSeats();
+        void loadExtras();
+      }
+      document.getElementById("refresh").onclick = loadTeacherViews;
+      document.getElementById("date").onchange = loadTeacherViews;
+      document.getElementById("period").onchange = loadTeacherViews;
       document.getElementById("close-dialog").onclick = () =>
         document.getElementById("seat-dialog").close();
       document.getElementById("mark-present").onclick = (e) =>
@@ -337,6 +445,7 @@
       document.getElementById("restore").onclick = (e) =>
         change("restore", e.currentTarget);
       document.getElementById("toggle-all-seats").onclick = () => {
+        if (seatLoadCount || !current || current.readOnly) return;
         const selectableKeys = Array.from(
           document.querySelectorAll(".seat[data-student-key]"),
           (seat) => seat.dataset.studentKey,
@@ -359,8 +468,31 @@
             // The browser token has already been cleared.
           }
       }
-      document.getElementById("logout").onclick = logoutTeacher;
+      document.getElementById("logout").onclick = () => {
+        if (confirmExtraLeave()) void logoutTeacher();
+      };
+      document.querySelector("[data-loading-label]").addEventListener(
+        "click",
+        (event) => {
+          if (
+            event.button !== 0 ||
+            event.metaKey ||
+            event.ctrlKey ||
+            event.shiftKey ||
+            event.altKey
+          )
+            return;
+          if (!confirmExtraLeave()) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+          }
+        },
+        true,
+      );
       setupNavigationFeedback(logoutTeacher);
+    </script>
+    <?!= include('TeacherExtras'); ?>
+    <script>
       init();
     </script>
   </body>

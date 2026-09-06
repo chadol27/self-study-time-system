@@ -155,6 +155,20 @@ function studentView_(key, config, student) {
     studentKey: student.key,
     studentId: student.studentId,
     name: student.name,
+    seat:
+      Number.isInteger(student.seat) &&
+      student.seat >= 1 &&
+      student.seat <= config.totalSeats
+        ? student.seat
+        : null,
+    applications: ["월", "화", "수", "목"].map(function (day, index) {
+      return {
+        day: day,
+        periods: [1, 2, 3].filter(function (period) {
+          return Number(student.applications[index * 3 + period - 1]) === 1;
+        }),
+      };
+    }),
     today: today,
     maxDate: max,
     todayClosed: isTodayStudentClosed_(config),

@@ -23,12 +23,18 @@ function teacherSchedule(token) {
     requireConfig_();
     requireTeacher_(token);
     const today = todayKey_();
+    const closedDates = getClosedDates_();
     const historical = getAttendanceColumns_()
       .map(function (x) {
         return x.key;
       })
+      .concat(
+        readExtraSheet_().blocks.map(function (x) {
+          return x.key;
+        }),
+      )
       .filter(function (key) {
-        return key && key < today;
+        return key && key < today && isOperatingDate_(key, closedDates);
       });
     const future = [];
     for (
@@ -36,7 +42,7 @@ function teacherSchedule(token) {
       key <= max;
       key = addDays_(key, 1)
     )
-      if (isOperatingDate_(key)) future.push(key);
+      if (isOperatingDate_(key, closedDates)) future.push(key);
     return Array.from(new Set(historical.concat(future))).sort();
   });
 }
@@ -59,7 +65,7 @@ function teacherSeats_(key, period) {
   let info = getAttendanceColumns_().find(function (x) {
     return x.key === key;
   });
-  if (!isOperatingDate_(key) && !(key < today && info))
+  if (!isOperatingDate_(key))
     throw userError_("미운영일은 조회할 수 없습니다.", "CLOSED_DATE");
   if (key > addDays_(today, 30))
     throw userError_(
@@ -67,7 +73,7 @@ function teacherSeats_(key, period) {
       "DATE_OUT_OF_RANGE",
     );
   if (!info && key >= today) info = { key: key, col: ensureDateColumns_(key) };
-  const report = validateAll_();
+  const report = validateAll_(false);
   const excluded = new Set(report.excludedKeys);
   const seats = /** @type {any[]} */ (
     Array.from({ length: config.totalSeats }, function (_, i) {
@@ -122,7 +128,7 @@ function teacherSeats_(key, period) {
   return {
     date: key,
     period: period,
-    readOnly: key < todayKey_(),
+    readOnly: key !== todayKey_(),
     seats: seats,
     errors: report.errors,
     totalSeats: config.totalSeats,
@@ -136,11 +142,8 @@ function teacherBatchChange(token, studentKeys, key, period, action) {
     period = Number(period);
     action = String(action);
     parseDateKey_(key);
-    if (key < todayKey_())
-      throw userError_(
-        "과거 날짜는 수정할 수 없습니다.",
-        "PAST_DATE_READ_ONLY",
-      );
+    if (key !== todayKey_())
+      throw userError_("오늘 날짜만 수정할 수 있습니다.", "DATE_READ_ONLY");
     assertFutureRange_(key, false);
     if (!isOperatingDate_(key))
       throw userError_("미운영일은 변경할 수 없습니다.", "CLOSED_DATE");
@@ -161,11 +164,11 @@ function teacherBatchChange(token, studentKeys, key, period, action) {
       throw userError_("선택한 학생을 확인해 주세요.", "INVALID_SELECTION");
     return withWriteLock_(function () {
       requireTeacher_(token);
-      if (key < todayKey_())
-        throw userError_(
-          "과거 날짜는 수정할 수 없습니다.",
-          "PAST_DATE_READ_ONLY",
-        );
+      requireConfig_();
+      if (key !== todayKey_())
+        throw userError_("오늘 날짜만 수정할 수 있습니다.", "DATE_READ_ONLY");
+      if (!isOperatingDate_(key))
+        throw userError_("미운영일은 변경할 수 없습니다.", "CLOSED_DATE");
       const selectedSet = new Set(keys);
       const students = readRoster_().filter(function (s) {
         return s.active && s.directoryValid && selectedSet.has(s.key);
@@ -184,34 +187,25 @@ function teacherBatchChange(token, studentKeys, key, period, action) {
       let changed = 0;
       const audits = [];
       students.forEach(function (student) {
-        const range = attendanceCell_(student, col, 1).offset(0, 0, 1, 3);
-        const values = range.getValues()[0];
-        let studentChanged = false;
-        for (let p = period; p <= 3; p++)
-          if (isApplied_(student, key, p)) {
-            const current = normalizeStatus_(values[p - 1]);
-            if (action === "absent" && current !== "1" && current !== "2")
-              continue;
-            if (action === "restore" && current === "4") continue;
-            const next =
-              action === "present" ? "2" : action === "absent" ? "3" : "1";
-            if (current !== normalizeStatus_(next)) {
-              values[p - 1] = Number(next);
-              audits.push([
-                now_(),
-                "교사",
-                student.key,
-                student.studentId,
-                parseDateKey_(key),
-                p,
-                current,
-                normalizeStatus_(next),
-              ]);
-              changed++;
-              studentChanged = true;
-            }
-          }
-        if (studentChanged) range.setValues([values]);
+        const cell = attendanceCell_(student, col, period);
+        const current = normalizeStatus_(cell.getValue());
+        if (action === "absent" && current !== "1" && current !== "2") return;
+        if (action === "restore" && current === "4") return;
+        const next =
+          action === "present" ? "2" : action === "absent" ? "3" : "1";
+        if (current === next) return;
+        cell.setValue(Number(next));
+        audits.push([
+          now_(),
+          "교사",
+          student.key,
+          student.studentId,
+          parseDateKey_(key),
+          period,
+          current,
+          next,
+        ]);
+        changed++;
       });
       appendAudits_(audits);
       return { changed: changed, view: teacherSeats_(key, period) };

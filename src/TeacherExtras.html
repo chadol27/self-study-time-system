@@ -1,0 +1,533 @@
+<script>
+  /* global bootstrap, teacherEpoch, token, authFail */
+  let extraDirectory = null;
+  let extraDirectoryLoading = false;
+  const extraDates = new Map();
+  const extraActionLabels = {
+    add: "추가 · 출석",
+    present: "출석",
+    absent: "결석",
+    restore: "되돌리기",
+    remove: "목록 제거",
+  };
+  const extraElement = (id) => document.getElementById(`extra-${id}`);
+  function extraState(date = document.getElementById("date").value) {
+    if (!extraDates.has(date))
+      extraDates.set(date, {
+        date,
+        rows: new Map(),
+        versions: {},
+        revisions: new Map(),
+        lanes: new Map(),
+        selected: new Set(),
+        readOnly: true,
+        loading: false,
+        loadId: 0,
+        errors: [],
+        notice: "",
+      });
+    return extraDates.get(date);
+  }
+  function extraBusy(state) {
+    return (
+      state.loading ||
+      Array.from(state.lanes.values()).some(
+        (lane) => !lane.failure && lane.queue.some((op) => op.action !== "add"),
+      )
+    );
+  }
+  function extraPending() {
+    return Array.from(extraDates.values()).some((state) => state.lanes.size);
+  }
+  function confirmExtraLeave() {
+    return (
+      !extraPending() ||
+      window.confirm(
+        "미신청자 저장 중이거나 실패한 작업이 있습니다. 나가면 대기 작업은 사라집니다. 이미 전송한 작업은 서버에 반영될 수 있습니다. 나가시겠습니까?",
+      )
+    );
+  }
+  window.addEventListener("beforeunload", (event) => {
+    if (!extraPending()) return;
+    event.preventDefault();
+    event.returnValue = "";
+  });
+  function resetExtras() {
+    extraDirectory = null;
+    extraDirectoryLoading = false;
+    extraDates.forEach((state) => {
+      state.rows.clear();
+      state.selected.clear();
+      state.revisions.clear();
+      state.versions = {};
+      state.errors = [];
+      state.notice = "";
+      state.lanes.forEach((lane) => {
+        lane.queue.length = 0;
+        lane.student = null;
+      });
+      state.lanes.clear();
+    });
+    extraDates.clear();
+    extraElement("search").value = "";
+    extraElement("search").disabled = true;
+    extraElement("all").onclick = null;
+    extraElement("all").disabled = true;
+    extraElement("count").textContent = "0명 선택됨";
+    document.querySelectorAll("[data-extra-action]").forEach((button) => {
+      button.disabled = true;
+    });
+    ["results", "list", "search-status", "status", "message"].forEach((id) =>
+      extraElement(id).replaceChildren(),
+    );
+  }
+  async function loadExtraDirectory() {
+    if (extraDirectory || extraDirectoryLoading || !token) return;
+    const epoch = teacherEpoch;
+    extraDirectoryLoading = true;
+    renderExtraSearch();
+    try {
+      const directory = unwrap(
+        await callServer("teacherExtraDirectory", token),
+      );
+      if (epoch !== teacherEpoch) return;
+      extraDirectory = directory;
+    } catch (error) {
+      if (epoch !== teacherEpoch) return;
+      if (error.code?.startsWith("AUTH")) return authFail();
+      extraElement("search-status").textContent =
+        "학생명단을 불러오지 못했습니다. 새로고침으로 다시 시도하세요.";
+    } finally {
+      if (epoch === teacherEpoch) {
+        extraDirectoryLoading = false;
+        renderExtraSearch();
+      }
+    }
+  }
+  // Snapshot responses cannot overwrite a newer local acknowledgement or another lane's pending writes.
+  function mergeExtraView(state, view, revisions, owner = null) {
+    const rows = new Map(view.students.map((row) => [row.studentId, row]));
+    const ids = new Set([
+      ...state.rows.keys(),
+      ...Object.keys(view.versions),
+      ...rows.keys(),
+    ]);
+    ids.forEach((id) => {
+      if (
+        id !== owner &&
+        (state.lanes.has(id) ||
+          (state.revisions.get(id) || 0) !== (revisions.get(id) || 0))
+      )
+        return;
+      if (rows.has(id)) state.rows.set(id, rows.get(id));
+      else state.rows.delete(id);
+      state.versions[id] = view.versions[id] || "";
+      state.revisions.set(id, (state.revisions.get(id) || 0) + 1);
+    });
+    state.readOnly = view.readOnly;
+    state.errors = view.errors || [];
+    state.selected.forEach((id) => {
+      if (!state.rows.has(id) && !state.lanes.has(id))
+        state.selected.delete(id);
+    });
+  }
+  async function loadExtras() {
+    if (!token) return;
+    void loadExtraDirectory();
+    const state = extraState();
+    const epoch = teacherEpoch;
+    const loadId = ++state.loadId;
+    const revisions = new Map(state.revisions);
+    const period = Number(document.getElementById("period").value);
+    state.selected.clear();
+    state.loading = true;
+    state.notice = "";
+    renderExtras();
+    try {
+      const view = unwrap(
+        await callServer("getTeacherExtras", token, state.date, period),
+      );
+      if (epoch !== teacherEpoch || loadId !== state.loadId) return;
+      mergeExtraView(state, view, revisions);
+    } catch (error) {
+      if (epoch !== teacherEpoch) return;
+      if (error.code?.startsWith("AUTH")) return authFail();
+      if (loadId !== state.loadId) return;
+      state.readOnly = true;
+      state.notice = error.message;
+    } finally {
+      if (epoch === teacherEpoch && loadId === state.loadId) {
+        state.loading = false;
+        renderExtras();
+      }
+    }
+  }
+  function extraButton(text, handler, className = "secondary") {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = className;
+    button.textContent = text;
+    button.onclick = handler;
+    return button;
+  }
+  function renderExtraSearch() {
+    const root = extraElement("results");
+    const state = extraState();
+    const disabled = !token || state.readOnly || extraBusy(state);
+    extraElement("search").disabled = disabled;
+    if (!extraDirectory) {
+      root.replaceChildren();
+      if (extraDirectoryLoading)
+        extraElement("search-status").textContent = "학생명단 불러오는 중...";
+      return;
+    }
+    const query = extraElement("search").value.trim().toLocaleLowerCase();
+    const matches = query
+      ? extraDirectory.filter(
+          (student) =>
+            student.name.toLocaleLowerCase().includes(query) ||
+            student.studentId.includes(query),
+        )
+      : [];
+    const searchStatus = query
+      ? `${matches.length}명 검색됨${matches.length > 40 ? " · 처음 40명 표시, 검색어를 좁혀 주세요." : ""}`
+      : "이름 또는 학번으로 검색하세요. 추가하면 현재 교시를 출석으로 저장합니다.";
+    if (extraElement("search-status").textContent !== searchStatus)
+      extraElement("search-status").textContent = searchStatus;
+    const buttons = new Map(
+      Array.from(root.children, (button) => [button.dataset.studentId, button]),
+    );
+    matches.slice(0, 40).forEach((student, index) => {
+      const button =
+        buttons.get(student.studentId) ||
+        extraButton(
+          `${student.name} (${student.studentId}) 추가 · 출석`,
+          () => {
+            const currentState = extraState();
+            if (
+              currentState.readOnly ||
+              extraBusy(currentState) ||
+              currentState.lanes.get(student.studentId)?.failure
+            )
+              return;
+            enqueueExtra(
+              currentState,
+              student,
+              "add",
+              Number(document.getElementById("period").value),
+            );
+            renderExtras();
+          },
+        );
+      button.dataset.studentId = student.studentId;
+      button.disabled =
+        disabled || !!state.lanes.get(student.studentId)?.failure;
+      // Keep unchanged search buttons mounted so background saves do not steal keyboard focus.
+      if (root.children[index] !== button)
+        root.insertBefore(button, root.children[index] || null);
+      buttons.delete(student.studentId);
+    });
+    buttons.forEach((button) => button.remove());
+  }
+  function renderExtras() {
+    if (!token) return;
+    const state = extraState();
+    const period = Number(document.getElementById("period").value);
+    const busy = extraBusy(state);
+    const disabled = busy || state.readOnly;
+    const rows = new Map(
+      Array.from(state.rows, ([id, row]) => [
+        id,
+        { ...row, values: [...row.values] },
+      ]),
+    );
+    state.lanes.forEach((lane, id) => {
+      // Conflicts show the actual server row, never an optimistic resurrection.
+      if (!lane.conflict)
+        lane.queue.forEach((op) => {
+          if (op.action !== "add") return;
+          if (!rows.has(id))
+            rows.set(id, { ...lane.student, values: ["", "", ""] });
+          rows.get(id).values[op.period - 1] = "2";
+        });
+    });
+    state.selected.forEach((id) => {
+      if (!rows.has(id)) state.selected.delete(id);
+    });
+    const ids = new Set([...rows.keys(), ...state.lanes.keys()]);
+    extraElement("count").textContent = state.readOnly
+      ? "오늘만 수정 가능 · 조회 전용"
+      : `${state.selected.size}명 선택됨`;
+    extraElement("status").textContent = state.loading
+      ? "미신청자 불러오는 중..."
+      : busy
+        ? "미신청자 저장 중... 이전 추가 작업도 순서대로 처리합니다."
+        : `${state.date} · ${period}교시 · ${rows.size}명`;
+    message(
+      extraElement("message"),
+      [state.notice, ...state.errors].filter(Boolean).join("\n"),
+      "error",
+    );
+    extraElement("all").disabled = disabled || !rows.size;
+    const all =
+      rows.size > 0 &&
+      Array.from(rows.keys()).every((id) => state.selected.has(id));
+    extraElement("all").textContent = all ? "전체 해제" : "전체 선택";
+    extraElement("all").onclick = () => {
+      if (disabled) return;
+      state.selected = all ? new Set() : new Set(rows.keys());
+      renderExtras();
+    };
+    document.querySelectorAll("[data-extra-action]").forEach((button) => {
+      button.disabled = disabled || !state.selected.size;
+    });
+    const root = extraElement("list");
+    const focusedControl = root.contains(document.activeElement)
+      ? document.activeElement.dataset.extraFocus
+      : null;
+    root.setAttribute("aria-busy", String(busy));
+    root.replaceChildren();
+    Array.from(ids)
+      .sort()
+      .forEach((id) => {
+        const lane = state.lanes.get(id);
+        const row = rows.get(id);
+        const student = row || lane.student;
+        const li = document.createElement("li");
+        li.className = "extra-item";
+        li.classList.toggle("extra-selected", state.selected.has(id));
+        const label = document.createElement("label");
+        label.className = "extra-choice";
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.dataset.extraFocus = `${id}:select`;
+        checkbox.checked = state.selected.has(id);
+        checkbox.disabled = disabled || !row;
+        checkbox.onchange = () => {
+          if (checkbox.checked) state.selected.add(id);
+          else state.selected.delete(id);
+          renderExtras();
+        };
+        const text = document.createElement("span");
+        text.textContent = `${student.name} (${id})`;
+        label.append(checkbox, text);
+        const status = document.createElement("span");
+        const value = row?.values[period - 1];
+        status.className = `extra-badge ${value === "2" ? "extra-present" : value === "3" ? "extra-absent" : ""}`;
+        status.textContent = row
+          ? `${period}교시 · ${value === "2" ? "출석" : value === "3" ? "결석" : "기록 없음"}`
+          : "서버 목록에 없음";
+        li.append(label, status);
+        if (lane) {
+          const saving = document.createElement("span");
+          saving.className = lane.failure ? "extra-failure" : "muted";
+          saving.textContent = lane.failure
+            ? `${lane.failure} (${lane.queue.map((op) => `${op.period}교시 ${extraActionLabels[op.action]}`).join(" → ")} · ${lane.queue.length}건 대기)`
+            : `저장 중... (${lane.queue.length}건)`;
+          li.appendChild(saving);
+          if (lane.failure) {
+            const retry = extraButton(
+              lane.conflict ? "최신 상태로 재확인" : "같은 요청 재시도",
+              () => retryExtra(state, id),
+            );
+            retry.disabled = busy || state.readOnly;
+            retry.dataset.extraFocus = `${id}:retry`;
+            const reread = extraButton("서버 다시 읽기 · 대기 취소", () =>
+              discardExtra(state, id),
+            );
+            reread.disabled = busy;
+            reread.dataset.extraFocus = `${id}:reread`;
+            li.append(retry, reread);
+          }
+        }
+        root.appendChild(li);
+      });
+    if (!ids.size) {
+      const empty = document.createElement("li");
+      empty.textContent = "추가된 미신청자가 없습니다.";
+      root.appendChild(empty);
+    }
+    if (focusedControl)
+      Array.from(root.querySelectorAll("[data-extra-focus]"))
+        .find(
+          (control) =>
+            control.dataset.extraFocus === focusedControl && !control.disabled,
+        )
+        ?.focus({ preventScroll: true });
+    renderExtraSearch();
+  }
+  function enqueueExtra(state, student, action, period, start = true) {
+    let lane = state.lanes.get(student.studentId);
+    if (!lane) {
+      lane = {
+        student,
+        queue: [],
+        version: state.versions[student.studentId] || "",
+        running: false,
+        failure: "",
+        conflict: false,
+      };
+      state.lanes.set(student.studentId, lane);
+    }
+    lane.queue.push({
+      action,
+      period,
+      requestId: crypto.randomUUID(),
+      selections: null,
+    });
+    if (start) void pumpExtra(state, student.studentId);
+  }
+  async function pumpExtra(state, id) {
+    const lane = state.lanes.get(id);
+    if (!lane || lane.running || lane.failure || !lane.queue.length || !token)
+      return;
+    const epoch = teacherEpoch;
+    lane.running = true;
+    const op = lane.queue[0];
+    op.selections ||= [{ studentId: id, version: lane.version }];
+    const revisions = new Map(state.revisions);
+    renderExtras();
+    try {
+      const result = unwrap(
+        await callServer(
+          "teacherExtraChange",
+          token,
+          state.date,
+          op.period,
+          op.action,
+          op.selections,
+          op.requestId,
+        ),
+      );
+      if (epoch !== teacherEpoch) return;
+      mergeExtraView(state, result.view, revisions, id);
+      if (result.conflict) {
+        lane.conflict = true;
+        lane.failure =
+          "다른 교사의 변경과 충돌했습니다. 최신 서버 상태를 확인하세요.";
+      } else {
+        lane.queue.shift();
+        if (!lane.queue.length) state.lanes.delete(id);
+        else {
+          // A replay returns a fresh view, not necessarily this request's committed version.
+          const appliedVersion = result.appliedVersions?.[id];
+          if (
+            typeof appliedVersion !== "string" ||
+            appliedVersion !== (result.view.versions[id] || "")
+          ) {
+            lane.conflict = true;
+            lane.failure =
+              typeof appliedVersion === "string"
+                ? "이전 작업은 저장되었지만 이후 다른 변경이 있습니다. 남은 작업을 재확인하세요."
+                : "이전 작업은 저장되었지만 저장 직후 버전을 확인할 수 없습니다. 남은 작업을 재확인하세요.";
+          } else lane.version = appliedVersion;
+        }
+      }
+    } catch (error) {
+      if (epoch !== teacherEpoch) return;
+      if (error.code?.startsWith("AUTH")) return authFail();
+      lane.failure = error.message || "저장 결과를 확인하지 못했습니다.";
+    } finally {
+      if (epoch === teacherEpoch) {
+        lane.running = false;
+        renderExtras();
+        if (!lane.failure) void pumpExtra(state, id);
+      }
+    }
+  }
+  function retryExtra(state, id) {
+    const lane = state.lanes.get(id);
+    if (!lane?.failure || extraBusy(state) || state.readOnly) return;
+    if (lane.conflict) {
+      const op = lane.queue[0];
+      if (
+        !window.confirm(
+          `${id} 학생의 최신 서버 상태를 기준으로 다음 ${lane.queue.length}건을 다시 진행할까요?\n${lane.queue.map((item) => `${item.period}교시 ${extraActionLabels[item.action]}`).join(" → ")}\n삭제된 학생은 추가 작업일 때만 다시 등록됩니다.`,
+        )
+      )
+        return;
+      lane.version = state.versions[id] || "";
+      op.requestId = crypto.randomUUID();
+      op.selections = null;
+      lane.conflict = false;
+    }
+    lane.failure = "";
+    void pumpExtra(state, id);
+  }
+  async function discardExtra(state, id) {
+    const lane = state.lanes.get(id);
+    if (!lane?.failure || extraBusy(state)) return;
+    if (
+      !window.confirm(
+        `${id} 학생의 대기 작업 ${lane.queue.length}건을 취소하고 서버에서 다시 읽을까요? 이미 저장된 결과는 유지됩니다.`,
+      )
+    )
+      return;
+    const epoch = teacherEpoch;
+    const revisions = new Map(state.revisions);
+    const loadId = ++state.loadId;
+    state.loading = true;
+    renderExtras();
+    try {
+      const view = unwrap(
+        await callServer(
+          "getTeacherExtras",
+          token,
+          state.date,
+          Number(document.getElementById("period").value),
+        ),
+      );
+      if (epoch !== teacherEpoch || loadId !== state.loadId) return;
+      state.lanes.delete(id);
+      mergeExtraView(state, view, revisions, id);
+      state.selected.delete(id);
+    } catch (error) {
+      if (epoch !== teacherEpoch) return;
+      if (error.code?.startsWith("AUTH")) return authFail();
+      if (loadId !== state.loadId) return;
+      state.notice = "다시 읽지 못해 대기 작업을 유지합니다. " + error.message;
+    } finally {
+      if (epoch === teacherEpoch && loadId === state.loadId) {
+        state.loading = false;
+        renderExtras();
+      }
+    }
+  }
+  extraElement("search").addEventListener("input", renderExtraSearch);
+  document.querySelectorAll("[data-extra-action]").forEach((button) => {
+    button.onclick = () => {
+      const state = extraState();
+      if (state.readOnly || extraBusy(state) || !state.selected.size) return;
+      const ids = Array.from(state.selected);
+      if (ids.some((id) => state.lanes.get(id)?.failure)) {
+        state.notice =
+          "선택한 학생의 실패한 작업을 재시도하거나 서버에서 다시 읽은 뒤 변경하세요.";
+        return renderExtras();
+      }
+      const action = button.dataset.extraAction;
+      if (
+        action === "remove" &&
+        !window.confirm(
+          "선택한 학생을 목록에서 제거할까요? 1~3교시가 모두 빈 값이어야 하며 서버에서 다시 확인합니다.",
+        )
+      )
+        return;
+      const period = Number(document.getElementById("period").value);
+      ids.forEach((id) =>
+        enqueueExtra(
+          state,
+          state.rows.get(id) || state.lanes.get(id).student,
+          action,
+          period,
+          false,
+        ),
+      );
+      state.selected.clear();
+      state.notice = "";
+      renderExtras();
+      ids.forEach((id) => {
+        void pumpExtra(state, id);
+      });
+    };
+  });
+</script>

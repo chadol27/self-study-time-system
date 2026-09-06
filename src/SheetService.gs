@@ -23,6 +23,8 @@ function initializeSheets_() {
     const settings =
       ss.getSheetByName(APP.SHEETS.SETTINGS) ||
       ss.insertSheet(APP.SHEETS.SETTINGS);
+    if (!ss.getSheetByName(APP.SHEETS.EXTRAS))
+      ss.insertSheet(APP.SHEETS.EXTRAS).setFrozenRows(2);
     if (roster.getLastRow() === 0) setupRoster_(roster);
     if (studentDirectory.getLastRow() === 0) {
       setupSimpleSheet_(studentDirectory, APP.STUDENT_DIRECTORY_HEADERS);
@@ -264,6 +266,11 @@ function appendAudits_(rows) {
   if (!rows.length) return;
   const sheet = spreadsheet_().getSheetByName(APP.SHEETS.LOG);
   const startRow = sheet.getLastRow() + 1;
+  if (sheet.getMaxRows() < startRow + rows.length - 1)
+    sheet.insertRowsAfter(
+      sheet.getMaxRows(),
+      startRow + rows.length - 1 - sheet.getMaxRows(),
+    );
   sheet
     .getRange(startRow, 1, rows.length, APP.LOG_HEADERS.length)
     .setValues(rows);
@@ -273,8 +280,18 @@ function appendAudits_(rows) {
   sheet.getRange(startRow, 5, rows.length, 1).setNumberFormat("yyyy-MM-dd");
 }
 
-function validateAll_() {
+function validateAll_(includeExtras = true) {
   const errors = [];
+  if (includeExtras) {
+    const extras = readExtraSheet_();
+    Array.prototype.push.apply(errors, extras.errors);
+    extras.blocks.forEach(function (block) {
+      Array.prototype.push.apply(
+        errors,
+        readExtraRows_(extras.sheet, block).errors,
+      );
+    });
+  }
   const config = getConfig_();
   if (!config.ok)
     errors.push("Script Properties 오류: " + config.errors.join(", "));
@@ -283,6 +300,7 @@ function validateAll_() {
     APP.SHEETS.STUDENT_DIRECTORY,
     APP.SHEETS.LOG,
     APP.SHEETS.SETTINGS,
+    APP.SHEETS.EXTRAS,
   ].forEach(function (n) {
     if (!spreadsheet_().getSheetByName(n)) errors.push(n + " 시트가 없습니다.");
   });

@@ -50,6 +50,9 @@
                 로그아웃
               </button>
             </div>
+            <h2>내 정기 신청</h2>
+            <p id="application-seat"></p>
+            <ul id="application-list" class="list"></ul>
           </section>
           <form id="absence-form" class="card stack">
             <h2>결석일 등록</h2>
@@ -164,6 +167,15 @@
         document.getElementById("dashboard").classList.remove("hidden");
         document.getElementById("identity").textContent =
           `${v.name} (${v.studentId})`;
+        document.getElementById("application-seat").textContent =
+          v.seat === null ? "좌석번호 확인 필요" : `좌석번호: ${v.seat}번`;
+        const applications = document.getElementById("application-list");
+        applications.replaceChildren();
+        v.applications.forEach((application) => {
+          const item = document.createElement("li");
+          item.textContent = `${application.day}요일: ${application.periods.length ? application.periods.map((period) => `${period}교시`).join(", ") : "미신청"}`;
+          applications.appendChild(item);
+        });
         const start = document.getElementById("start-date");
         const startMin = v.todayClosed ? nextDateKey(v.today) : v.today;
         start.min = startMin;
