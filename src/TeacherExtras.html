@@ -191,7 +191,7 @@
       : [];
     const searchStatus = query
       ? `${matches.length}명 검색됨${matches.length > 40 ? " · 처음 40명 표시, 검색어를 좁혀 주세요." : ""}`
-      : "이름 또는 학번으로 검색하세요. 추가하면 현재 교시를 출석으로 저장합니다.";
+      : "";
     if (extraElement("search-status").textContent !== searchStatus)
       extraElement("search-status").textContent = searchStatus;
     const buttons = new Map(
@@ -200,25 +200,22 @@
     matches.slice(0, 40).forEach((student, index) => {
       const button =
         buttons.get(student.studentId) ||
-        extraButton(
-          `${student.name} (${student.studentId}) 추가 · 출석`,
-          () => {
-            const currentState = extraState();
-            if (
-              currentState.readOnly ||
-              extraBusy(currentState) ||
-              currentState.lanes.get(student.studentId)?.failure
-            )
-              return;
-            enqueueExtra(
-              currentState,
-              student,
-              "add",
-              Number(document.getElementById("period").value),
-            );
-            renderExtras();
-          },
-        );
+        extraButton(`${student.studentId} ${student.name}`, () => {
+          const currentState = extraState();
+          if (
+            currentState.readOnly ||
+            extraBusy(currentState) ||
+            currentState.lanes.get(student.studentId)?.failure
+          )
+            return;
+          enqueueExtra(
+            currentState,
+            student,
+            "add",
+            Number(document.getElementById("period").value),
+          );
+          renderExtras();
+        });
       button.dataset.studentId = student.studentId;
       button.disabled =
         disabled || !!state.lanes.get(student.studentId)?.failure;
@@ -256,12 +253,12 @@
     });
     const ids = new Set([...rows.keys(), ...state.lanes.keys()]);
     extraElement("count").textContent = state.readOnly
-      ? "오늘만 수정 가능 · 조회 전용"
+      ? ""
       : `${state.selected.size}명 선택됨`;
     extraElement("status").textContent = state.loading
       ? "미신청자 불러오는 중..."
       : busy
-        ? "미신청자 저장 중... 이전 추가 작업도 순서대로 처리합니다."
+        ? "미신청자 저장 중..."
         : `${state.date} · ${period}교시 · ${rows.size}명`;
     message(
       extraElement("message"),
@@ -293,8 +290,11 @@
         const lane = state.lanes.get(id);
         const row = rows.get(id);
         const student = row || lane.student;
+        const value = row?.values[period - 1];
         const li = document.createElement("li");
         li.className = "extra-item";
+        li.classList.toggle("extra-present", value === "2");
+        li.classList.toggle("extra-absent", value === "3");
         li.classList.toggle("extra-selected", state.selected.has(id));
         const label = document.createElement("label");
         label.className = "extra-choice";
@@ -312,7 +312,6 @@
         text.textContent = `${student.name} (${id})`;
         label.append(checkbox, text);
         const status = document.createElement("span");
-        const value = row?.values[period - 1];
         status.className = `extra-badge ${value === "2" ? "extra-present" : value === "3" ? "extra-absent" : ""}`;
         status.textContent = row
           ? `${period}교시 · ${value === "2" ? "출석" : value === "3" ? "결석" : "기록 없음"}`

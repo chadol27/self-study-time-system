@@ -396,10 +396,11 @@
     border: 2px solid #dce3ed;
     border-radius: 10px;
     margin-bottom: 8px;
+    background: #fff;
   }
   .extra-list .extra-selected {
     border-color: var(--blue);
-    background: #eaf1ff;
+    box-shadow: 0 0 0 3px #2457d633;
   }
   .extra-choice {
     display: flex;
@@ -419,11 +420,13 @@
     padding: 6px 10px;
     background: var(--gray);
   }
-  .extra-present {
+  .extra-present,
+  .extra-list .extra-present {
     background: var(--green);
     color: #175d27;
   }
-  .extra-absent {
+  .extra-absent,
+  .extra-list .extra-absent {
     background: #ffd8d8;
     color: #731717;
   }
