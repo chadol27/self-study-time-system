@@ -92,7 +92,7 @@
               type="button"
               disabled
             >
-              전체 선택
+              신청자 전체 선택
             </button>
           </div>
           <div class="seat-wrap"><div id="seats" class="seats"></div></div>
@@ -253,12 +253,11 @@
             .setAttribute("aria-pressed", String(selected));
         });
         const count = selectedKeys.size;
-        const selectableKeys = Array.from(
-          document.querySelectorAll(".seat[data-student-key]"),
-          (seat) => seat.dataset.studentKey,
-        );
+        const selectableKeys = (current?.seats || [])
+          .filter((seat) => seat.student && seat.applied)
+          .map((seat) => seat.student.key);
         const allSelected =
-          selectableKeys.length > 0 &&
+          count > 0 &&
           selectableKeys.every((studentKey) => selectedKeys.has(studentKey));
         document.getElementById("selected-count").textContent =
           current?.readOnly
@@ -280,8 +279,8 @@
           seatLoadCount > 0 ||
           !current ||
           current.readOnly ||
-          selectableKeys.length === 0;
-        toggle.textContent = allSelected ? "전체 해제" : "전체 선택";
+          (selectableKeys.length === 0 && count === 0);
+        toggle.textContent = allSelected ? "전체 해제" : "신청자 전체 선택";
       }
       function openSeat(s) {
         if (seatLoadCount || !current) return;
@@ -437,10 +436,9 @@
         change("restore", e.currentTarget);
       document.getElementById("toggle-all-seats").onclick = () => {
         if (seatLoadCount || !current || current.readOnly) return;
-        const selectableKeys = Array.from(
-          document.querySelectorAll(".seat[data-student-key]"),
-          (seat) => seat.dataset.studentKey,
-        );
+        const selectableKeys = current.seats
+          .filter((seat) => seat.student && seat.applied)
+          .map((seat) => seat.student.key);
         const selectAll = !selectableKeys.every((studentKey) =>
           selectedKeys.has(studentKey),
         );

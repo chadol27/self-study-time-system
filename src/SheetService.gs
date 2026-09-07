@@ -256,6 +256,11 @@ function applicationIndex_(key, period) {
 function isApplied_(student, key, period) {
   return Number(student.applications[applicationIndex_(key, period)]) === 1;
 }
+function isAppliedOnDate_(student, key) {
+  return [1, 2, 3].some(function (period) {
+    return isApplied_(student, key, period);
+  });
+}
 function normalizeStatus_(value) {
   return value === "" || value === null || Number(value) === 0
     ? ""
@@ -397,40 +402,42 @@ function validateAll_(includeExtras = true) {
       });
     }
   });
-  for (let day = 0; day < 4; day++)
-    for (let period = 0; period < 3; period++) {
-      const seats = {};
-      students
-        .filter(function (s) {
-          return s.active && Number(s.applications[day * 3 + period]) === 1;
-        })
-        .forEach(function (s) {
-          if (!seats[s.seat]) seats[s.seat] = [];
-          seats[s.seat].push(s);
-        });
-      Object.keys(seats).forEach(function (seat) {
-        if (seats[seat].length > 1) {
-          errors.push(
-            "좌석 중복: " +
-              (day + 1) +
-              "요일 " +
-              (period + 1) +
-              "교시 " +
-              seat +
-              "번 (" +
-              seats[seat]
-                .map(function (s) {
-                  return s.studentId;
-                })
-                .join(", ") +
-              ")",
-          );
-          seats[seat].forEach(function (s) {
-            excluded.add(s.key);
-          });
-        }
+  for (let day = 0; day < 4; day++) {
+    const seats = {};
+    students
+      .filter(function (s) {
+        return (
+          s.active &&
+          s.applications.slice(day * 3, day * 3 + 3).some(function (value) {
+            return Number(value) === 1;
+          })
+        );
+      })
+      .forEach(function (s) {
+        if (!seats[s.seat]) seats[s.seat] = [];
+        seats[s.seat].push(s);
       });
-    }
+    Object.keys(seats).forEach(function (seat) {
+      if (seats[seat].length > 1) {
+        errors.push(
+          "좌석 중복: " +
+            ["월", "화", "수", "목"][day] +
+            "요일 " +
+            seat +
+            "번 (" +
+            seats[seat]
+              .map(function (s) {
+                return s.studentId;
+              })
+              .join(", ") +
+            ")",
+        );
+        seats[seat].forEach(function (s) {
+          excluded.add(s.key);
+        });
+      }
+    });
+  }
   const cols = getAttendanceColumns_();
   cols.forEach(function (x) {
     if (!x.key || x.periods.join("|") !== "1교시|2교시|3교시")

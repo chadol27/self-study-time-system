@@ -82,7 +82,7 @@ function teacherSeats_(key, period) {
   );
   readRoster_()
     .filter(function (s) {
-      return s.active && !excluded.has(s.key) && isApplied_(s, key, period);
+      return s.active && !excluded.has(s.key) && isAppliedOnDate_(s, key);
     })
     .forEach(function (s) {
       const applicationSummary = ["월", "화", "수", "목"]
@@ -101,6 +101,7 @@ function teacherSeats_(key, period) {
       const raw = info
         ? normalizeStatus_(attendanceCell_(s, info.col, period).getValue())
         : "";
+      const applied = isApplied_(s, key, period);
       const status =
         raw === "2"
           ? "attended"
@@ -108,7 +109,9 @@ function teacherSeats_(key, period) {
             ? "absent"
             : raw === "4"
               ? "pre-absence"
-              : "applied";
+              : applied
+                ? "applied"
+                : "not-applied";
       const label =
         raw === "2"
           ? "출석"
@@ -116,12 +119,15 @@ function teacherSeats_(key, period) {
             ? "결석"
             : raw === "4"
               ? "결석 예정"
-              : "신청함";
+              : applied
+                ? "신청함"
+                : "해당 교시 미신청";
       seats[s.seat - 1] = {
         seat: s.seat,
         student: { key: s.key, studentId: s.studentId, name: s.name },
         status: status,
         label: label,
+        applied: applied,
         applicationSummary: applicationSummary,
       };
     });
@@ -170,13 +176,14 @@ function teacherBatchChange(token, studentKeys, key, period, action) {
       if (!isOperatingDate_(key))
         throw userError_("미운영일은 변경할 수 없습니다.", "CLOSED_DATE");
       const selectedSet = new Set(keys);
+      const excluded = new Set(validateAll_(false).excludedKeys);
       const students = readRoster_().filter(function (s) {
-        return s.active && s.directoryValid && selectedSet.has(s.key);
+        return s.active && !excluded.has(s.key) && selectedSet.has(s.key);
       });
       if (
         students.length !== keys.length ||
         students.some(function (student) {
-          return !isApplied_(student, key, period);
+          return !isAppliedOnDate_(student, key);
         })
       )
         throw userError_(
@@ -189,12 +196,24 @@ function teacherBatchChange(token, studentKeys, key, period, action) {
       students.forEach(function (student) {
         const cell = attendanceCell_(student, col, period);
         const current = normalizeStatus_(cell.getValue());
-        if (action === "absent" && current !== "1" && current !== "2") return;
+        const applied = isApplied_(student, key, period);
+        if (
+          action === "absent" &&
+          current !== "2" &&
+          !(applied && current === "1")
+        )
+          return;
         if (action === "restore" && current === "4") return;
         const next =
-          action === "present" ? "2" : action === "absent" ? "3" : "1";
+          action === "present"
+            ? "2"
+            : action === "absent"
+              ? "3"
+              : applied
+                ? "1"
+                : "";
         if (current === next) return;
-        cell.setValue(Number(next));
+        cell.setValue(next === "" ? "" : Number(next));
         audits.push([
           now_(),
           "교사",
