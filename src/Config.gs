@@ -6,6 +6,7 @@ const APP = Object.freeze({
     LOG: "기록",
     SETTINGS: "설정",
     EXTRAS: "미신청자",
+    TEACHERS: "교사",
   }),
   ROSTER_FIRST_DATA_ROW: 3,
   ATTENDANCE_FIRST_COL: 16,
@@ -69,6 +70,7 @@ const APP = Object.freeze({
     "새 상태",
   ]),
   SETTINGS_HEADERS: Object.freeze(["날짜", "사유"]),
+  TEACHER_HEADERS: Object.freeze(["날짜", "교사"]),
 });
 
 function getConfig_() {

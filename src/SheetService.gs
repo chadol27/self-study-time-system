@@ -23,6 +23,9 @@ function initializeSheets_() {
     const settings =
       ss.getSheetByName(APP.SHEETS.SETTINGS) ||
       ss.insertSheet(APP.SHEETS.SETTINGS);
+    const teachers =
+      ss.getSheetByName(APP.SHEETS.TEACHERS) ||
+      ss.insertSheet(APP.SHEETS.TEACHERS);
     if (!ss.getSheetByName(APP.SHEETS.EXTRAS))
       ss.insertSheet(APP.SHEETS.EXTRAS).setFrozenRows(2);
     if (roster.getLastRow() === 0) setupRoster_(roster);
@@ -33,6 +36,8 @@ function initializeSheets_() {
     if (log.getLastRow() === 0) setupSimpleSheet_(log, APP.LOG_HEADERS);
     if (settings.getLastRow() === 0)
       setupSimpleSheet_(settings, APP.SETTINGS_HEADERS);
+    if (teachers.getLastRow() === 0)
+      setupSimpleSheet_(teachers, APP.TEACHER_HEADERS);
   } finally {
     lock.releaseLock();
   }
@@ -308,6 +313,7 @@ function validateAll_(includeExtras = true, snapshot = null) {
     APP.SHEETS.LOG,
     APP.SHEETS.SETTINGS,
     APP.SHEETS.EXTRAS,
+    APP.SHEETS.TEACHERS,
   ].forEach(function (n) {
     if (!spreadsheet_().getSheetByName(n)) errors.push(n + " 시트가 없습니다.");
   });
@@ -318,6 +324,7 @@ function validateAll_(includeExtras = true, snapshot = null) {
     APP.SHEETS.STUDENT_DIRECTORY,
   );
   const settingsSheet = spreadsheet_().getSheetByName(APP.SHEETS.SETTINGS);
+  const teachersSheet = spreadsheet_().getSheetByName(APP.SHEETS.TEACHERS);
   if (!simpleHeadersValid_(directorySheet, APP.STUDENT_DIRECTORY_HEADERS))
     errors.push("학생명단 시트 헤더가 올바르지 않습니다.");
   if (
@@ -342,6 +349,8 @@ function validateAll_(includeExtras = true, snapshot = null) {
         }))
   )
     errors.push("설정 시트 헤더가 올바르지 않습니다.");
+  if (!simpleHeadersValid_(teachersSheet, APP.TEACHER_HEADERS))
+    errors.push("교사 시트 헤더가 올바르지 않습니다.");
   if (!config.ok || !headersValid_())
     return { errors: errors, excludedKeys: [] };
   const students = snapshot ? snapshot.roster : readRoster_();

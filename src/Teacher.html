@@ -15,7 +15,20 @@
           </nav>
           <h1>교사 좌석 및 출결 관리</h1>
         </div>
-        <button id="logout" class="secondary" type="button">로그아웃</button>
+        <div class="teacher-name-actions">
+          <label>
+            교사
+            <input
+              id="teacher-name"
+              type="text"
+              maxlength="100"
+              autocomplete="off"
+              disabled
+            />
+          </label>
+          <button id="save-teacher-name" type="button" disabled>저장</button>
+          <button id="logout" class="secondary" type="button">로그아웃</button>
+        </div>
       </div>
       <div id="teacher-loading" class="page-loading" role="status">
         <span class="loading-spinner" aria-hidden="true"></span>
@@ -131,7 +144,27 @@
         viewPeriod = "1",
         seatLoadCount = 0,
         teacherEpoch = 0,
-        seatRequest = 0;
+        seatRequest = 0,
+        initialTeacherName = "",
+        teacherNameDirty = false,
+        teacherNameBusy = false;
+      function updateTeacherNameUi() {
+        const input = document.getElementById("teacher-name");
+        const save = document.getElementById("save-teacher-name");
+        teacherNameDirty = input.value !== initialTeacherName;
+        input.disabled = !token || teacherNameBusy;
+        save.disabled = !token || teacherNameBusy || !teacherNameDirty;
+      }
+      function setTeacherName(name) {
+        initialTeacherName = name;
+        document.getElementById("teacher-name").value = name;
+        updateTeacherNameUi();
+      }
+      function discardTeacherNameDraft() {
+        if (!teacherNameDirty) return;
+        document.getElementById("teacher-name").value = initialTeacherName;
+        updateTeacherNameUi();
+      }
       function setTeacherLoading(loading) {
         document
           .getElementById("teacher-loading")
@@ -173,6 +206,11 @@
         selectedKeys.clear();
         initialSeatKeys.clear();
         seatDraftDirty = false;
+        initialTeacherName = "";
+        teacherNameDirty = false;
+        teacherNameBusy = false;
+        document.getElementById("teacher-name").value = "";
+        updateTeacherNameUi();
         updateSelectionUi();
         setTeacherLoading(false);
         document.getElementById("teacher-content").classList.add("hidden");
@@ -376,9 +414,10 @@
         if (!token) return authFail();
         void loadExtraDirectory();
         try {
-          const [base, dates] = await Promise.all([
+          const [base, dates, teacher] = await Promise.all([
             callServer("teacherBootstrap", token),
             callServer("teacherSchedule", token),
+            callServer("teacherGetTodayName", token),
           ]).then((x) => x.map(unwrap));
           if (epoch !== teacherEpoch) return;
           const sel = document.getElementById("date");
@@ -390,6 +429,7 @@
           document.getElementById("period").value = String(base.defaultPeriod);
           viewDate = base.defaultDate;
           viewPeriod = String(base.defaultPeriod);
+          setTeacherName(teacher.name);
           setTeacherLoading(false);
           document.getElementById("teacher-content").classList.remove("hidden");
           await Promise.all([loadSeats(), loadExtras()]);
@@ -452,6 +492,42 @@
         document.getElementById("seat-dialog").close();
       document.getElementById("save-seats").onclick = (e) =>
         saveSeats(e.currentTarget);
+      document.getElementById("teacher-name").oninput = updateTeacherNameUi;
+      document.getElementById("save-teacher-name").onclick = async (event) => {
+        if (!token || teacherNameBusy || !teacherNameDirty) return;
+        const epoch = teacherEpoch;
+        const button = event.currentTarget;
+        teacherNameBusy = true;
+        updateTeacherNameUi();
+        setBusy(button, true);
+        try {
+          const result = unwrap(
+            await callServer(
+              "teacherSaveTodayName",
+              token,
+              document.getElementById("teacher-name").value,
+            ),
+          );
+          if (epoch !== teacherEpoch) return;
+          setTeacherName(result.name);
+          message(
+            document.getElementById("message"),
+            "교사 정보를 저장했습니다.",
+            "success",
+          );
+        } catch (error) {
+          if (epoch !== teacherEpoch) return;
+          if (error.code?.startsWith("AUTH")) authFail();
+          else
+            message(document.getElementById("message"), error.message, "error");
+        } finally {
+          if (epoch === teacherEpoch) {
+            teacherNameBusy = false;
+            setBusy(button, false);
+            updateTeacherNameUi();
+          }
+        }
+      };
       document.getElementById("toggle-all-seats").onclick = () => {
         if (seatLoadCount || !current || current.readOnly) return;
         const selectableKeys = current.seats

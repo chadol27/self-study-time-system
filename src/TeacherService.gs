@@ -46,6 +46,64 @@ function teacherSchedule(token) {
     return Array.from(new Set(historical.concat(future))).sort();
   });
 }
+function teacherGetTodayName(token) {
+  return publicCall_(function () {
+    requireTeacher_(token);
+    const sheet = spreadsheet_().getSheetByName(APP.SHEETS.TEACHERS);
+    if (!simpleHeadersValid_(sheet, APP.TEACHER_HEADERS))
+      throw userError_("교사 시트 헤더를 확인해 주세요.", "INVALID_HEADERS");
+    const today = todayKey_();
+    if (sheet.getLastRow() < 2) return { name: "" };
+    const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, 2).getValues();
+    const row = rows.find(function (values) {
+      return (
+        values[0] instanceof Date &&
+        !isNaN(values[0].getTime()) &&
+        dateKey_(values[0]) === today
+      );
+    });
+    return { name: row ? String(row[1] == null ? "" : row[1]) : "" };
+  });
+}
+function teacherSaveTodayName(token, name) {
+  return publicCall_(function () {
+    if (typeof name !== "string")
+      throw userError_("교사 정보를 확인해 주세요.", "INVALID_TEACHER_NAME");
+    const trimmed = name.trim();
+    if (trimmed.length > 100)
+      throw userError_(
+        "교사 정보는 100자 이하로 입력해 주세요.",
+        "INVALID_TEACHER_NAME",
+      );
+    return withWriteLock_(function () {
+      requireTeacher_(token);
+      const sheet = spreadsheet_().getSheetByName(APP.SHEETS.TEACHERS);
+      if (!simpleHeadersValid_(sheet, APP.TEACHER_HEADERS))
+        throw userError_("교사 시트 헤더를 확인해 주세요.", "INVALID_HEADERS");
+      const today = todayKey_();
+      const date = parseDateKey_(today);
+      const count = Math.max(0, sheet.getLastRow() - 1);
+      const rows = count ? sheet.getRange(2, 1, count, 2).getValues() : [];
+      const index = rows.findIndex(function (values) {
+        return (
+          values[0] instanceof Date &&
+          !isNaN(values[0].getTime()) &&
+          dateKey_(values[0]) === today
+        );
+      });
+      if (index >= 0) {
+        sheet.getRange(index + 2, 2).setValue(trimmed);
+      } else {
+        const row = sheet.getLastRow() + 1;
+        if (sheet.getMaxRows() < row)
+          sheet.insertRowsAfter(sheet.getMaxRows(), 1);
+        sheet.getRange(row, 1, 1, 2).setValues([[date, trimmed]]);
+        sheet.getRange(row, 1).setNumberFormat("yyyy-MM-dd");
+      }
+      return { name: trimmed };
+    });
+  });
+}
 function getTeacherSeats(token, key, period) {
   return publicCall_(function () {
     requireConfig_();
