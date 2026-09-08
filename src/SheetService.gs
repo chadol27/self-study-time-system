@@ -98,8 +98,17 @@ function ensureStudentKeys_() {
         writes.push({ row: i + 3, key: key });
       }
     });
-    writes.forEach(function (w) {
-      sheet.getRange(w.row, APP.STUDENT_KEY_COL).setValue(w.key);
+    const groups = [];
+    writes.forEach(function (write) {
+      const previous = groups[groups.length - 1];
+      if (previous && previous.row + previous.values.length === write.row)
+        previous.values.push([write.key]);
+      else groups.push({ row: write.row, values: [[write.key]] });
+    });
+    groups.forEach(function (group) {
+      sheet
+        .getRange(group.row, APP.STUDENT_KEY_COL, group.values.length, 1)
+        .setValues(group.values);
     });
     if (!sheet.isColumnHiddenByUser(APP.STUDENT_KEY_COL))
       sheet.hideColumns(APP.STUDENT_KEY_COL);
@@ -152,8 +161,8 @@ function getAttendanceColumns_() {
   return result;
 }
 
-function ensureDateColumns_(key) {
-  const existing = getAttendanceColumns_();
+function ensureDateColumns_(key, existing) {
+  existing = existing || getAttendanceColumns_();
   const found = existing.filter(function (x) {
     return x.key === key;
   });
@@ -195,6 +204,18 @@ function ensureDateColumns_(key) {
     .setValues([["1교시", "2교시", "3교시"]])
     .setFontWeight("bold")
     .setHorizontalAlignment("center");
+  existing.forEach(function (item) {
+    if (item.col >= col) item.col += 3;
+  });
+  existing.push({
+    key: key,
+    col: col,
+    raw: date,
+    periods: ["1교시", "2교시", "3교시"],
+  });
+  existing.sort(function (a, b) {
+    return a.col - b.col;
+  });
   return col;
 }
 

@@ -14,8 +14,9 @@ function teacherBootstrap(token) {
 }
 function latestOperatingDate_() {
   let key = todayKey_();
+  const closedDates = getClosedDates_();
   for (let i = 0; i < 370; i++, key = addDays_(key, -1))
-    if (isOperatingDate_(key)) return key;
+    if (isOperatingDate_(key, closedDates)) return key;
   return todayKey_();
 }
 function teacherSchedule(token) {
@@ -150,19 +151,9 @@ function teacherSeatSnapshot_(key, period, writable = false) {
   )
     throw userError_("출결 날짜 헤더 구조를 확인해 주세요.", "INVALID_HEADERS");
   if (!info && key >= today) {
-    const col = ensureDateColumns_(key);
-    columns.forEach(function (x) {
-      if (x.col >= col) x.col += 3;
-    });
-    info = {
-      key: key,
-      col: col,
-      raw: parseDateKey_(key),
-      periods: ["1교시", "2교시", "3교시"],
-    };
-    columns.push(info);
-    columns.sort(function (a, b) {
-      return a.col - b.col;
+    ensureDateColumns_(key, columns);
+    info = columns.find(function (x) {
+      return x.key === key;
     });
   }
   const snapshot = {

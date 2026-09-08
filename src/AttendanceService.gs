@@ -32,7 +32,14 @@ function processOperatingDate_(key) {
 function processOperatingDateUnlocked_(key) {
   if (wasAutoProcessed_(key)) return { date: key, processed: 0 };
   const col = ensureDateColumns_(key);
-  let count = 0;
+  const columnNames = [];
+  for (let current = col; current < col + 3; current++) {
+    let name = "";
+    for (let n = current; n > 0; n = Math.floor((n - 1) / 26))
+      name = String.fromCharCode(65 + ((n - 1) % 26)) + name;
+    columnNames.push(name);
+  }
+  const addresses = [];
   readRoster_()
     .filter(function (s) {
       return s.active;
@@ -40,19 +47,21 @@ function processOperatingDateUnlocked_(key) {
     .forEach(function (s) {
       for (let p = 1; p <= 3; p++)
         if (isApplied_(s, key, p)) {
-          const cell = attendanceCell_(s, col, p);
-          const status = normalizeStatus_(cell.getValue());
-          if (status === "") {
-            cell.setValue(1);
-            count++;
-          }
+          const index = col - APP.ATTENDANCE_FIRST_COL + p - 1;
+          if (normalizeStatus_(s.attendance[index]) === "")
+            addresses.push(columnNames[p - 1] + s.row);
         }
     });
+  if (addresses.length)
+    spreadsheet_()
+      .getSheetByName(APP.SHEETS.ROSTER)
+      .getRangeList(addresses)
+      .setValue(1);
   PropertiesService.getScriptProperties().setProperty(
     "AUTO_PROCESSED_" + key,
     "1",
   );
-  return { date: key, processed: count };
+  return { date: key, processed: addresses.length };
 }
 function syncFutureAttendanceColumns_() {
   const today = todayKey_();
@@ -78,18 +87,25 @@ function syncFutureAttendanceColumns_() {
     }
     const operatingSet = new Set(operatingDates);
     const sheet = spreadsheet_().getSheetByName(APP.SHEETS.ROSTER);
-    columns
+    const removed = columns
       .filter(function (x) {
         return x.key >= today && x.key <= max && !operatingSet.has(x.key);
       })
       .sort(function (a, b) {
         return b.col - a.col;
-      })
-      .forEach(function (x) {
-        sheet.deleteColumns(x.col, 3);
       });
+    removed.forEach(function (x) {
+      sheet.deleteColumns(x.col, 3);
+    });
+    removed.forEach(function (removedColumn) {
+      const index = columns.indexOf(removedColumn);
+      if (index >= 0) columns.splice(index, 1);
+      columns.forEach(function (column) {
+        if (column.col > removedColumn.col) column.col -= 3;
+      });
+    });
     operatingDates.forEach(function (key) {
-      ensureDateColumns_(key);
+      ensureDateColumns_(key, columns);
     });
 
     const attendance = operatingSet.has(today)
@@ -204,13 +220,14 @@ function registerStudentAbsence(studentKey, startKey, endKey) {
       );
     return withWriteLock_(function () {
       const student = requireStudent_(studentKey);
+      const columns = getAttendanceColumns_();
       const appliedDates = [];
       const audits = [];
       dates.forEach(function (key) {
         if (key === todayKey_() && isTodayStudentClosed_(config))
           throw userError_("당일 등록이 마감되었습니다.", "TODAY_CLOSED");
         let changed = false;
-        const col = ensureDateColumns_(key);
+        const col = ensureDateColumns_(key, columns);
         const range = attendanceCell_(student, col, 1).offset(0, 0, 1, 3);
         const values = range.getValues()[0];
         for (let p = 1; p <= 3; p++)

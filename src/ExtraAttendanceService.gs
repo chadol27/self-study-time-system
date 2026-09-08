@@ -79,6 +79,8 @@ function readExtraRows_(sheet, block) {
       invalidIds: invalidIds,
       nextRow: nextRow,
       raw: [],
+      display: [],
+      formulas: [],
     };
   const range = sheet.getRange(3, block.col, lastRow - 2, 4);
   const raw = range.getValues();
@@ -131,6 +133,8 @@ function readExtraRows_(sheet, block) {
     invalidIds: invalidIds,
     nextRow: nextRow,
     raw: raw,
+    display: display,
+    formulas: formulas,
   };
 }
 
@@ -396,14 +400,12 @@ function recoverExtraPending_(metadata) {
           })
         )
           blocked();
-        const range =
-          plan.row <= source.sheet.getMaxRows()
-            ? source.sheet.getRange(plan.row, block.col, 1, 4)
-            : null;
-        const current = range ? range.getValues()[0] : ["", "", "", ""];
-        const id = range ? range.getDisplayValues()[0][0].trim() : "";
+        const index = plan.row - 3;
+        const current = data.raw[index] || ["", "", "", ""];
+        const id = data.display[index] ? data.display[index][0].trim() : "";
+        const formulas = data.formulas[index] || ["", "", "", ""];
         if (
-          (range && range.getFormulas()[0].some(Boolean)) ||
+          formulas.some(Boolean) ||
           (id !== plan.beforeId && id !== plan.afterId) ||
           current.slice(1).some(function (value, p) {
             return (
@@ -599,7 +601,8 @@ function teacherExtraChange(
       const previous = metadata.all[receiptKey]
         ? JSON.parse(metadata.all[receiptKey])
         : null;
-      const view = extraView_(date, period, metadata);
+      const snapshot = extraBatchSnapshot_(date);
+      const view = extraView_(date, period, metadata, snapshot);
       if (previous) {
         if (previous.payload !== payload)
           throw userError_(
@@ -645,7 +648,7 @@ function teacherExtraChange(
         metadata.props.setProperty(receiptKey, JSON.stringify(receipt));
         return { changed: 0, view: view, conflict: true };
       }
-      const source = readExtraSheet_();
+      const source = snapshot.source;
       if (source.errors.length)
         throw userError_(
           "미신청자 시트 헤더를 확인해 주세요.",
@@ -654,8 +657,8 @@ function teacherExtraChange(
       const block = source.blocks.find(function (item) {
         return item.key === date;
       });
-      const data = readExtraRows_(source.sheet, block);
-      const directory = readStudentDirectorySheet_();
+      const data = snapshot.data;
+      const directory = snapshot.directory;
       const log = spreadsheet_().getSheetByName(APP.SHEETS.LOG);
       if (!simpleHeadersValid_(log, APP.LOG_HEADERS))
         throw userError_("기록 시트 헤더를 확인해 주세요.", "INVALID_HEADERS");
