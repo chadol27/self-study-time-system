@@ -59,40 +59,15 @@
         </section>
         <section id="seat-card" class="card">
           <div id="batch-actions" class="batch-actions">
-            <strong id="selected-count">0명 선택됨</strong>
-            <button
-              id="mark-present"
-              type="button"
-              data-requires-selection
-              disabled
-            >
-              출석
-            </button>
-            <button
-              id="mark-absence"
-              class="danger"
-              type="button"
-              data-requires-selection
-              disabled
-            >
-              결석
-            </button>
-            <button
-              id="restore"
-              class="secondary"
-              type="button"
-              data-requires-selection
-              disabled
-            >
-              되돌리기
-            </button>
+            <strong id="selected-count">0명 출석 예정</strong>
+            <button id="save-seats" type="button" disabled>저장</button>
             <button
               id="toggle-all-seats"
               class="secondary"
               type="button"
               disabled
             >
-              신청자 전체 선택
+              전체 선택
             </button>
           </div>
           <div class="seat-wrap"><div id="seats" class="seats"></div></div>
@@ -116,19 +91,13 @@
           <div id="extra-results" class="extra-results"></div>
           <div id="extra-message" class="notice hidden" role="status"></div>
           <div class="extra-actions">
-            <strong id="extra-count">0명 선택됨</strong>
+            <strong id="extra-count">0명 출석 예정</strong>
+            <button type="button" data-extra-action="save">저장</button>
             <button id="extra-all" type="button" class="secondary">
               전체 선택
             </button>
-            <button type="button" data-extra-action="present">출석</button>
-            <button type="button" data-extra-action="absent" class="danger">
-              결석
-            </button>
-            <button type="button" data-extra-action="restore" class="secondary">
-              되돌리기
-            </button>
-            <button type="button" data-extra-action="remove" class="secondary">
-              목록에서 제거
+            <button type="button" data-extra-action="removeAll" class="danger">
+              모두 삭제
             </button>
           </div>
           <div id="extra-status" class="muted" role="status"></div>
@@ -152,10 +121,14 @@
     </script>
     <?!= include('Client'); ?>
     <script>
-      /* global resetExtras, loadExtraDirectory, loadExtras, confirmExtraLeave */
+      /* global resetExtras, loadExtraDirectory, loadExtras, confirmExtraLeave, extraOperationBusy */
       let token = localStorage.getItem("sgs_teacher_token"),
         current = null,
         selectedKeys = new Set(),
+        initialSeatKeys = new Set(),
+        seatDraftDirty = false,
+        viewDate = "",
+        viewPeriod = "1",
         seatLoadCount = 0,
         teacherEpoch = 0,
         seatRequest = 0;
@@ -198,6 +171,8 @@
           .querySelectorAll("#batch-actions button")
           .forEach((button) => setBusy(button, false));
         selectedKeys.clear();
+        initialSeatKeys.clear();
+        seatDraftDirty = false;
         updateSelectionUi();
         setTeacherLoading(false);
         document.getElementById("teacher-content").classList.add("hidden");
@@ -205,7 +180,13 @@
       }
       function renderSeats(v) {
         current = v;
-        selectedKeys.clear();
+        selectedKeys = new Set(
+          v.seats
+            .filter((s) => s.student && s.checked)
+            .map((s) => s.student.key),
+        );
+        initialSeatKeys = new Set(selectedKeys);
+        seatDraftDirty = false;
         const root = document.getElementById("seats");
         root.innerHTML = "";
         v.seats.forEach((s) => {
@@ -218,7 +199,10 @@
             seat.innerHTML = `<strong class="seat-number">${s.seat}</strong><button class="seat-info" type="button" aria-label="${escapeHtml(s.student.name)} 학생 상세 정보">i</button><button class="seat-body" type="button" aria-pressed="false"><span>${escapeHtml(s.student.studentId)}</span><span>${escapeHtml(s.student.name)}</span><small>${escapeHtml(s.label)}</small></button>`;
             seat
               .querySelector(".seat-body")
-              .setAttribute("aria-disabled", String(v.readOnly));
+              .setAttribute(
+                "aria-disabled",
+                String(v.readOnly || s.raw === "4"),
+              );
             seat.querySelector(".seat-body").onclick = () =>
               toggleSeat(s.student.key);
             seat.querySelector(".seat-info").onclick = (e) => {
@@ -240,13 +224,34 @@
       }
       function toggleSeat(studentKey) {
         if (seatLoadCount || !current || current.readOnly) return;
+        if (
+          current.seats.find((s) => s.student?.key === studentKey)?.raw === "4"
+        )
+          return;
         if (selectedKeys.has(studentKey)) selectedKeys.delete(studentKey);
         else selectedKeys.add(studentKey);
         updateSelectionUi();
       }
       function updateSelectionUi() {
+        seatDraftDirty =
+          selectedKeys.size !== initialSeatKeys.size ||
+          Array.from(selectedKeys).some((key) => !initialSeatKeys.has(key));
+        const byKey = new Map(
+          (current?.seats || [])
+            .filter((s) => s.student)
+            .map((s) => [s.student.key, s]),
+        );
         document.querySelectorAll(".seat[data-student-key]").forEach((seat) => {
           const selected = selectedKeys.has(seat.dataset.studentKey);
+          const s = byKey.get(seat.dataset.studentKey);
+          if (s && !current.readOnly && s.raw !== "4") {
+            seat.className = `seat ${selected ? "attended" : s.applied ? "absent" : "not-applied"}`;
+            seat.querySelector("small").textContent = selected
+              ? "출석 예정"
+              : s.applied
+                ? "결석 예정"
+                : "해당 교시 미신청";
+          }
           seat.classList.toggle("selected", selected);
           seat
             .querySelector(".seat-body")
@@ -254,7 +259,7 @@
         });
         const count = selectedKeys.size;
         const selectableKeys = (current?.seats || [])
-          .filter((seat) => seat.student && seat.applied)
+          .filter((seat) => seat.student && seat.applied && seat.raw !== "4")
           .map((seat) => seat.student.key);
         const allSelected =
           count > 0 &&
@@ -262,25 +267,19 @@
         document.getElementById("selected-count").textContent =
           current?.readOnly
             ? "오늘만 수정 가능 · 조회 전용"
-            : `${count}명 선택됨`;
-        document
-          .getElementById("batch-actions")
-          .querySelectorAll("[data-requires-selection]")
-          .forEach(
-            (button) =>
-              (button.disabled =
-                seatLoadCount > 0 ||
-                !current ||
-                current.readOnly ||
-                count === 0),
-          );
+            : `${count}명 출석 예정${seatDraftDirty ? " · 미저장 변경" : ""}`;
+        document.getElementById("save-seats").disabled =
+          seatLoadCount > 0 ||
+          !current ||
+          current.readOnly ||
+          !current.seats.some((seat) => seat.student && seat.raw !== "4");
         const toggle = document.getElementById("toggle-all-seats");
         toggle.disabled =
           seatLoadCount > 0 ||
           !current ||
           current.readOnly ||
           (selectableKeys.length === 0 && count === 0);
-        toggle.textContent = allSelected ? "전체 해제" : "신청자 전체 선택";
+        toggle.textContent = allSelected ? "전체 해제" : "전체 선택";
       }
       function openSeat(s) {
         if (seatLoadCount || !current) return;
@@ -295,6 +294,8 @@
         const period = Number(document.getElementById("period").value);
         current = null;
         selectedKeys.clear();
+        initialSeatKeys.clear();
+        seatDraftDirty = false;
         const b = document.getElementById("refresh");
         const dialog = document.getElementById("seat-dialog");
         if (dialog.open) dialog.close();
@@ -319,9 +320,8 @@
           }
         }
       }
-      async function change(action, button) {
-        if (seatLoadCount || !current || current.readOnly || !selectedKeys.size)
-          return;
+      async function saveSeats(button) {
+        if (seatLoadCount || !current || current.readOnly) return;
         const epoch = teacherEpoch;
         const request = seatRequest;
         setSeatsLoading(true);
@@ -332,19 +332,23 @@
         try {
           const d = unwrap(
             await callServer(
-              "teacherBatchChange",
+              "teacherSaveSeats",
               token,
-              Array.from(selectedKeys),
+              current.seats
+                .filter((seat) => seat.student && seat.raw !== "4")
+                .map((seat) => ({
+                  studentKey: seat.student.key,
+                  checked: selectedKeys.has(seat.student.key),
+                })),
               current.date,
               current.period,
-              action,
             ),
           );
           if (epoch !== teacherEpoch || request !== seatRequest) return;
           renderSeats(d.view);
           message(
             document.getElementById("message"),
-            `${d.changed}개 교시를 변경했습니다.`,
+            `${d.changed}명의 출결을 변경했습니다.`,
             "success",
           );
         } catch (e) {
@@ -384,6 +388,8 @@
             sel.add(new Option(base.defaultDate, base.defaultDate));
           sel.value = base.defaultDate;
           document.getElementById("period").value = String(base.defaultPeriod);
+          viewDate = base.defaultDate;
+          viewPeriod = String(base.defaultPeriod);
           setTeacherLoading(false);
           document.getElementById("teacher-content").classList.remove("hidden");
           await Promise.all([loadSeats(), loadExtras()]);
@@ -420,6 +426,22 @@
         }
       };
       function loadTeacherViews() {
+        if (seatLoadCount || extraOperationBusy()) {
+          document.getElementById("date").value = viewDate;
+          document.getElementById("period").value = viewPeriod;
+          message(
+            document.getElementById("message"),
+            "처리가 끝난 뒤 다시 시도해 주세요.",
+          );
+          return;
+        }
+        if (!confirmExtraLeave()) {
+          document.getElementById("date").value = viewDate;
+          document.getElementById("period").value = viewPeriod;
+          return;
+        }
+        viewDate = document.getElementById("date").value;
+        viewPeriod = document.getElementById("period").value;
         void loadSeats();
         void loadExtras();
       }
@@ -428,16 +450,12 @@
       document.getElementById("period").onchange = loadTeacherViews;
       document.getElementById("close-dialog").onclick = () =>
         document.getElementById("seat-dialog").close();
-      document.getElementById("mark-present").onclick = (e) =>
-        change("present", e.currentTarget);
-      document.getElementById("mark-absence").onclick = (e) =>
-        change("absent", e.currentTarget);
-      document.getElementById("restore").onclick = (e) =>
-        change("restore", e.currentTarget);
+      document.getElementById("save-seats").onclick = (e) =>
+        saveSeats(e.currentTarget);
       document.getElementById("toggle-all-seats").onclick = () => {
         if (seatLoadCount || !current || current.readOnly) return;
         const selectableKeys = current.seats
-          .filter((seat) => seat.student && seat.applied)
+          .filter((seat) => seat.student && seat.applied && seat.raw !== "4")
           .map((seat) => seat.student.key);
         const selectAll = !selectableKeys.every((studentKey) =>
           selectedKeys.has(studentKey),

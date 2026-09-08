@@ -56,13 +56,21 @@ function getTeacherSeats(token, key, period) {
     });
   });
 }
-function teacherSeats_(key, period) {
+function teacherSeatSnapshot_(key, period, writable = false) {
   const config = requireConfig_();
   if (!Number.isInteger(period) || period < 1 || period > 3)
     throw userError_("교시가 올바르지 않습니다.", "INVALID_PERIOD");
   parseDateKey_(key);
   const today = todayKey_();
-  let info = getAttendanceColumns_().find(function (x) {
+  if (writable && key !== today)
+    throw userError_("오늘 날짜만 수정할 수 있습니다.", "DATE_READ_ONLY");
+  if (writable && !headersValid_())
+    throw userError_(
+      "명부 시트의 고정 헤더를 확인해 주세요.",
+      "INVALID_HEADERS",
+    );
+  const columns = getAttendanceColumns_();
+  let info = columns.find(function (x) {
     return x.key === key;
   });
   if (!isOperatingDate_(key))
@@ -72,15 +80,64 @@ function teacherSeats_(key, period) {
       "조회 가능한 미래 날짜를 벗어났습니다.",
       "DATE_OUT_OF_RANGE",
     );
-  if (!info && key >= today) info = { key: key, col: ensureDateColumns_(key) };
-  const report = validateAll_(false);
+  if (
+    writable &&
+    columns.some(function (x, i) {
+      return (
+        !x.key ||
+        x.periods.join("|") !== "1교시|2교시|3교시" ||
+        (i > 0 && columns[i - 1].key >= x.key)
+      );
+    })
+  )
+    throw userError_("출결 날짜 헤더 구조를 확인해 주세요.", "INVALID_HEADERS");
+  if (!info && key >= today) {
+    const col = ensureDateColumns_(key);
+    columns.forEach(function (x) {
+      if (x.col >= col) x.col += 3;
+    });
+    info = {
+      key: key,
+      col: col,
+      raw: parseDateKey_(key),
+      periods: ["1교시", "2교시", "3교시"],
+    };
+    columns.push(info);
+    columns.sort(function (a, b) {
+      return a.col - b.col;
+    });
+  }
+  const snapshot = {
+    config: config,
+    today: today,
+    columns: columns,
+    info: info,
+    roster: readRoster_(),
+    report: null,
+  };
+  snapshot.report = validateAll_(false, snapshot);
+  return snapshot;
+}
+function teacherSeats_(key, period, snapshot = null) {
+  snapshot = snapshot || teacherSeatSnapshot_(key, period);
+  const config = snapshot.config;
+  const info = snapshot.info;
+  const report = snapshot.report;
+  const readOnly = key !== snapshot.today;
   const excluded = new Set(report.excludedKeys);
   const seats = /** @type {any[]} */ (
     Array.from({ length: config.totalSeats }, function (_, i) {
-      return { seat: i + 1, student: null, status: "empty", label: "미신청" };
+      return {
+        seat: i + 1,
+        student: null,
+        status: "empty",
+        label: "미신청",
+        raw: "",
+        checked: false,
+      };
     })
   );
-  readRoster_()
+  snapshot.roster
     .filter(function (s) {
       return s.active && !excluded.has(s.key) && isAppliedOnDate_(s, key);
     })
@@ -98,10 +155,20 @@ function teacherSeats_(key, period) {
         })
         .filter(Boolean)
         .join(", ");
-      const raw = info
-        ? normalizeStatus_(attendanceCell_(s, info.col, period).getValue())
-        : "";
+      const index = info
+        ? info.col - APP.ATTENDANCE_FIRST_COL + period - 1
+        : -1;
+      const raw = index >= 0 ? normalizeStatus_(s.attendance[index]) : "";
       const applied = isApplied_(s, key, period);
+      const previous =
+        info && period > 1 ? normalizeStatus_(s.attendance[index - 1]) : "";
+      const checked =
+        raw === "2" ||
+        (!readOnly &&
+          raw !== "3" &&
+          raw !== "4" &&
+          applied &&
+          (period === 1 || (previous !== "3" && previous !== "4")));
       const status =
         raw === "2"
           ? "attended"
@@ -128,17 +195,116 @@ function teacherSeats_(key, period) {
         status: status,
         label: label,
         applied: applied,
+        raw: raw,
+        checked: checked,
         applicationSummary: applicationSummary,
       };
     });
   return {
     date: key,
     period: period,
-    readOnly: key !== todayKey_(),
+    readOnly: readOnly,
     seats: seats,
     errors: report.errors,
     totalSeats: config.totalSeats,
   };
+}
+function teacherSaveSeats(token, selections, key, period) {
+  return publicCall_(function () {
+    return withWriteLock_(function () {
+      requireTeacher_(token);
+      key = String(key);
+      period = Number(period);
+      const snapshot = teacherSeatSnapshot_(key, period, true);
+      if (
+        !Array.isArray(selections) ||
+        selections.length > snapshot.config.totalSeats
+      )
+        throw userError_(
+          "저장할 학생 정보를 확인해 주세요.",
+          "INVALID_SELECTION",
+        );
+      const selected = new Map();
+      selections.forEach(function (selection) {
+        if (
+          !selection ||
+          typeof selection.studentKey !== "string" ||
+          !selection.studentKey ||
+          typeof selection.checked !== "boolean" ||
+          selected.has(selection.studentKey)
+        )
+          throw userError_(
+            "저장할 학생 정보를 확인해 주세요.",
+            "INVALID_SELECTION",
+          );
+        selected.set(selection.studentKey, selection.checked);
+      });
+      const excluded = new Set(snapshot.report.excludedKeys);
+      const students = snapshot.roster.filter(function (student) {
+        return (
+          student.active &&
+          !excluded.has(student.key) &&
+          isAppliedOnDate_(student, key) &&
+          selected.has(student.key)
+        );
+      });
+      if (students.length !== selected.size)
+        throw userError_(
+          "선택한 학생 정보를 다시 확인해 주세요.",
+          "INVALID_SELECTION",
+        );
+      const col = snapshot.info.col + period - 1;
+      const index = col - APP.ATTENDANCE_FIRST_COL;
+      const ranges = new Map();
+      const audits = [];
+      const timestamp = now_();
+      const date = parseDateKey_(key);
+      students.forEach(function (student) {
+        const current = normalizeStatus_(student.attendance[index]);
+        // A stale checkbox must never overwrite a newly registered pre-absence.
+        if (current === "4") return;
+        const next = selected.get(student.key)
+          ? "2"
+          : isApplied_(student, key, period)
+            ? "3"
+            : "";
+        if (current === next) return;
+        if (!ranges.has(next)) ranges.set(next, []);
+        ranges.get(next).push(student.row);
+        student.attendance[index] = next === "" ? "" : Number(next);
+        audits.push([
+          timestamp,
+          "교사",
+          student.key,
+          student.studentId,
+          date,
+          period,
+          current,
+          next,
+        ]);
+      });
+      teacherWriteSeatRanges_(col, ranges);
+      appendAudits_(audits);
+      return {
+        changed: audits.length,
+        view: teacherSeats_(key, period, snapshot),
+      };
+    });
+  });
+}
+function teacherWriteSeatRanges_(col, ranges) {
+  if (!ranges.size) return;
+  let columnName = "";
+  for (let n = col; n > 0; n = Math.floor((n - 1) / 26))
+    columnName = String.fromCharCode(65 + ((n - 1) % 26)) + columnName;
+  const sheet = spreadsheet_().getSheetByName(APP.SHEETS.ROSTER);
+  // Address only changed cells, preserving formulas and unknown cells in gaps.
+  ranges.forEach(function (rows, next) {
+    const addresses = rows.map(function (row) {
+      return columnName + row;
+    });
+    sheet.getRangeList(addresses).setValue(next === "" ? "" : Number(next));
+  });
 }
 function teacherBatchChange(token, studentKeys, key, period, action) {
   return publicCall_(function () {
@@ -170,14 +336,12 @@ function teacherBatchChange(token, studentKeys, key, period, action) {
       throw userError_("선택한 학생을 확인해 주세요.", "INVALID_SELECTION");
     return withWriteLock_(function () {
       requireTeacher_(token);
-      requireConfig_();
-      if (key !== todayKey_())
-        throw userError_("오늘 날짜만 수정할 수 있습니다.", "DATE_READ_ONLY");
-      if (!isOperatingDate_(key))
-        throw userError_("미운영일은 변경할 수 없습니다.", "CLOSED_DATE");
+      const snapshot = teacherSeatSnapshot_(key, period, true);
+      if (keys.length > snapshot.config.totalSeats)
+        throw userError_("선택한 학생을 확인해 주세요.", "INVALID_SELECTION");
       const selectedSet = new Set(keys);
-      const excluded = new Set(validateAll_(false).excludedKeys);
-      const students = readRoster_().filter(function (s) {
+      const excluded = new Set(snapshot.report.excludedKeys);
+      const students = snapshot.roster.filter(function (s) {
         return s.active && !excluded.has(s.key) && selectedSet.has(s.key);
       });
       if (
@@ -190,12 +354,13 @@ function teacherBatchChange(token, studentKeys, key, period, action) {
           "선택한 학생 정보를 다시 확인해 주세요.",
           "INVALID_SELECTION",
         );
-      const col = ensureDateColumns_(key);
+      const col = snapshot.info.col + period - 1;
+      const index = col - APP.ATTENDANCE_FIRST_COL;
+      const ranges = new Map();
       let changed = 0;
       const audits = [];
       students.forEach(function (student) {
-        const cell = attendanceCell_(student, col, period);
-        const current = normalizeStatus_(cell.getValue());
+        const current = normalizeStatus_(student.attendance[index]);
         const applied = isApplied_(student, key, period);
         if (
           action === "absent" &&
@@ -213,7 +378,9 @@ function teacherBatchChange(token, studentKeys, key, period, action) {
                 ? "1"
                 : "";
         if (current === next) return;
-        cell.setValue(next === "" ? "" : Number(next));
+        if (!ranges.has(next)) ranges.set(next, []);
+        ranges.get(next).push(student.row);
+        student.attendance[index] = next === "" ? "" : Number(next);
         audits.push([
           now_(),
           "교사",
@@ -226,8 +393,9 @@ function teacherBatchChange(token, studentKeys, key, period, action) {
         ]);
         changed++;
       });
+      teacherWriteSeatRanges_(col, ranges);
       appendAudits_(audits);
-      return { changed: changed, view: teacherSeats_(key, period) };
+      return { changed: changed, view: teacherSeats_(key, period, snapshot) };
     });
   });
 }

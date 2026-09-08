@@ -1,79 +1,87 @@
 <script>
-  /* global bootstrap, teacherEpoch, token, authFail */
+  /* global bootstrap, teacherEpoch, token, authFail, seatDraftDirty, seatLoadCount */
   let extraDirectory = null;
   let extraDirectoryLoading = false;
-  const extraDates = new Map();
-  const extraActionLabels = {
-    add: "추가 · 출석",
-    present: "출석",
-    absent: "결석",
-    restore: "되돌리기",
-    remove: "목록 제거",
-  };
+  let extraDirectoryError = "";
+  let extraLoadId = 0;
+  let extraOperationCount = 0;
+  let extraLeaveApproved = false;
+  let extraCurrent = extraEmptyState();
   const extraElement = (id) => document.getElementById(`extra-${id}`);
-  function extraState(date = document.getElementById("date").value) {
-    if (!extraDates.has(date))
-      extraDates.set(date, {
-        date,
-        rows: new Map(),
-        versions: {},
-        revisions: new Map(),
-        lanes: new Map(),
-        selected: new Set(),
-        readOnly: true,
-        loading: false,
-        loadId: 0,
-        errors: [],
-        notice: "",
-      });
-    return extraDates.get(date);
+  function extraEmptyState() {
+    return {
+      date: "",
+      period: 1,
+      rows: new Map(),
+      generations: {},
+      readOnly: true,
+      loading: false,
+      running: false,
+      request: null,
+      errors: [],
+      notice: "",
+    };
   }
-  function extraBusy(state) {
-    return (
-      state.loading ||
-      Array.from(state.lanes.values()).some(
-        (lane) => !lane.failure && lane.queue.some((op) => op.action !== "add"),
-      )
-    );
+  function extraState() {
+    return extraCurrent;
+  }
+  function extraOperationBusy() {
+    return extraOperationCount > 0;
+  }
+  function extraBusy(state = extraCurrent) {
+    return state.loading || state.running || !!state.request;
   }
   function extraPending() {
-    return Array.from(extraDates.values()).some((state) => state.lanes.size);
-  }
-  function confirmExtraLeave() {
+    const state = extraCurrent;
     return (
-      !extraPending() ||
-      window.confirm(
-        "미신청자 저장 중이거나 실패한 작업이 있습니다. 나가면 대기 작업은 사라집니다. 이미 전송한 작업은 서버에 반영될 수 있습니다. 나가시겠습니까?",
+      !!state.request ||
+      Array.from(state.rows.values()).some(
+        (row) => row.isNew || row.checked !== row.initialChecked,
       )
     );
   }
+  function confirmExtraLeave() {
+    extraLeaveApproved = false;
+    if (
+      extraOperationBusy() ||
+      (typeof seatLoadCount !== "undefined" && seatLoadCount > 0)
+    ) {
+      window.alert("처리 중입니다. 완료 후 이동해 주세요.");
+      return false;
+    }
+    const dirty =
+      extraPending() ||
+      (typeof seatDraftDirty !== "undefined" && seatDraftDirty);
+    extraLeaveApproved =
+      !dirty ||
+      window.confirm(
+        "좌석 또는 미신청자 영역의 저장하지 않은 초안을 버리고 이동하거나 다시 불러올까요?\n결과를 확인하지 못한 요청은 이미 저장되었거나 나중에 반영될 수 있습니다. 초안을 버려도 서버에 전송한 요청이 취소되거나 저장된 결과가 되돌려지지는 않습니다.",
+      );
+    return extraLeaveApproved;
+  }
   window.addEventListener("beforeunload", (event) => {
-    if (!extraPending()) return;
+    if (
+      !extraPending() &&
+      !extraOperationBusy() &&
+      !(typeof seatDraftDirty !== "undefined" && seatDraftDirty) &&
+      !(typeof seatLoadCount !== "undefined" && seatLoadCount > 0)
+    )
+      return;
     event.preventDefault();
     event.returnValue = "";
   });
   function resetExtras() {
+    extraLoadId++;
+    extraCurrent = extraEmptyState();
     extraDirectory = null;
     extraDirectoryLoading = false;
-    extraDates.forEach((state) => {
-      state.rows.clear();
-      state.selected.clear();
-      state.revisions.clear();
-      state.versions = {};
-      state.errors = [];
-      state.notice = "";
-      state.lanes.forEach((lane) => {
-        lane.queue.length = 0;
-        lane.student = null;
-      });
-      state.lanes.clear();
-    });
-    extraDates.clear();
+    extraDirectoryError = "";
+    extraLeaveApproved = false;
     extraElement("search").value = "";
     extraElement("search").disabled = true;
-    extraElement("all").onclick = null;
     extraElement("all").disabled = true;
-    extraElement("count").textContent = "0명 선택됨";
+    extraElement("all").onclick = null;
+    extraElement("count").textContent = "0명";
     document.querySelectorAll("[data-extra-action]").forEach((button) => {
       button.disabled = true;
     });
@@ -85,18 +93,17 @@
     if (extraDirectory || extraDirectoryLoading || !token) return;
     const epoch = teacherEpoch;
     extraDirectoryLoading = true;
+    extraDirectoryError = "";
     renderExtraSearch();
     try {
       const directory = unwrap(
         await callServer("teacherExtraDirectory", token),
       );
-      if (epoch !== teacherEpoch) return;
-      extraDirectory = directory;
+      if (epoch === teacherEpoch) extraDirectory = directory;
     } catch (error) {
       if (epoch !== teacherEpoch) return;
       if (error.code?.startsWith("AUTH")) return authFail();
-      extraElement("search-status").textContent =
-        "학생명단을 불러오지 못했습니다. 새로고침으로 다시 시도하세요.";
+      extraDirectoryError = "학생명단을 불러오지 못했습니다.";
     } finally {
       if (epoch === teacherEpoch) {
         extraDirectoryLoading = false;
@@ -104,59 +111,60 @@
       }
     }
   }
-  // Snapshot responses cannot overwrite a newer local acknowledgement or another lane's pending writes.
-  function mergeExtraView(state, view, revisions, owner = null) {
-    const rows = new Map(view.students.map((row) => [row.studentId, row]));
-    const ids = new Set([
-      ...state.rows.keys(),
-      ...Object.keys(view.versions),
-      ...rows.keys(),
-    ]);
-    ids.forEach((id) => {
-      if (
-        id !== owner &&
-        (state.lanes.has(id) ||
-          (state.revisions.get(id) || 0) !== (revisions.get(id) || 0))
-      )
-        return;
-      if (rows.has(id)) state.rows.set(id, rows.get(id));
-      else state.rows.delete(id);
-      state.versions[id] = view.versions[id] || "";
-      state.revisions.set(id, (state.revisions.get(id) || 0) + 1);
-    });
+  function applyExtraView(state, view) {
+    state.date = view.date;
+    state.period = view.period;
     state.readOnly = view.readOnly;
+    state.generations = view.generations || {};
     state.errors = view.errors || [];
-    state.selected.forEach((id) => {
-      if (!state.rows.has(id) && !state.lanes.has(id))
-        state.selected.delete(id);
-    });
+    state.rows = new Map(
+      view.students.map((row) => {
+        const value = row.values[view.period - 1];
+        const previous = view.period > 1 ? row.values[view.period - 2] : "";
+        const checked = value ? value === "2" : previous !== "3";
+        return [
+          row.studentId,
+          {
+            ...row,
+            values: [...row.values],
+            isNew: false,
+            checked,
+            initialChecked: checked,
+            generation: state.generations[row.studentId] || "0",
+          },
+        ];
+      }),
+    );
   }
   async function loadExtras() {
-    if (!token) return;
+    if (!token || extraOperationBusy()) return;
+    if (extraPending() && !extraLeaveApproved) return;
+    extraLeaveApproved = false;
     void loadExtraDirectory();
-    const state = extraState();
-    const epoch = teacherEpoch;
-    const loadId = ++state.loadId;
-    const revisions = new Map(state.revisions);
+    const state = extraCurrent;
+    const date = document.getElementById("date").value;
     const period = Number(document.getElementById("period").value);
-    state.selected.clear();
+    const epoch = teacherEpoch;
+    const loadId = ++extraLoadId;
     state.loading = true;
     state.notice = "";
     renderExtras();
     try {
       const view = unwrap(
-        await callServer("getTeacherExtras", token, state.date, period),
+        await callServer("getTeacherExtras", token, date, period),
       );
-      if (epoch !== teacherEpoch || loadId !== state.loadId) return;
-      mergeExtraView(state, view, revisions);
+      if (epoch !== teacherEpoch || loadId !== extraLoadId) return;
+      applyExtraView(state, view);
+      state.request = null;
     } catch (error) {
-      if (epoch !== teacherEpoch) return;
+      if (epoch !== teacherEpoch || loadId !== extraLoadId) return;
       if (error.code?.startsWith("AUTH")) return authFail();
-      if (loadId !== state.loadId) return;
       state.readOnly = true;
-      state.notice = error.message;
+      state.notice =
+        "다시 읽지 못해 미신청자 초안과 대기 요청을 유지합니다. " +
+        error.message;
     } finally {
-      if (epoch === teacherEpoch && loadId === state.loadId) {
+      if (epoch === teacherEpoch && loadId === extraLoadId) {
         state.loading = false;
         renderExtras();
       }
@@ -170,15 +178,27 @@
     button.onclick = handler;
     return button;
   }
+  function extraEditable(state) {
+    return (
+      !!token &&
+      !state.readOnly &&
+      !extraBusy(state) &&
+      !extraOperationBusy() &&
+      !state.errors.length &&
+      state.date === document.getElementById("date").value &&
+      state.period === Number(document.getElementById("period").value)
+    );
+  }
   function renderExtraSearch() {
+    const state = extraCurrent;
     const root = extraElement("results");
-    const state = extraState();
-    const disabled = !token || state.readOnly || extraBusy(state);
+    const disabled = !extraEditable(state);
     extraElement("search").disabled = disabled;
+    root.replaceChildren();
     if (!extraDirectory) {
-      root.replaceChildren();
-      if (extraDirectoryLoading)
-        extraElement("search-status").textContent = "학생명단 불러오는 중...";
+      extraElement("search-status").textContent = extraDirectoryLoading
+        ? "학생명단 불러오는 중..."
+        : extraDirectoryError;
       return;
     }
     const query = extraElement("search").value.trim().toLocaleLowerCase();
@@ -189,305 +209,237 @@
             student.studentId.includes(query),
         )
       : [];
-    const searchStatus = query
-      ? `${matches.length}명 검색됨${matches.length > 40 ? " · 처음 40명 표시, 검색어를 좁혀 주세요." : ""}`
+    extraElement("search-status").textContent = query
+      ? `${matches.length}명 검색됨${matches.length > 40 ? " · 처음 40명 표시" : ""}`
       : "";
-    if (extraElement("search-status").textContent !== searchStatus)
-      extraElement("search-status").textContent = searchStatus;
-    const buttons = new Map(
-      Array.from(root.children, (button) => [button.dataset.studentId, button]),
-    );
-    matches.slice(0, 40).forEach((student, index) => {
-      const button =
-        buttons.get(student.studentId) ||
-        extraButton(`${student.studentId} ${student.name}`, () => {
-          const currentState = extraState();
-          if (
-            currentState.readOnly ||
-            extraBusy(currentState) ||
-            currentState.lanes.get(student.studentId)?.failure
-          )
-            return;
-          enqueueExtra(
-            currentState,
-            student,
-            "add",
-            Number(document.getElementById("period").value),
-          );
-          renderExtras();
+    matches.slice(0, 40).forEach((student) => {
+      const button = extraButton(`${student.studentId} ${student.name}`, () => {
+        if (!extraEditable(state) || state.rows.has(student.studentId)) return;
+        state.rows.set(student.studentId, {
+          ...student,
+          values: ["", "", ""],
+          isNew: true,
+          checked: true,
+          initialChecked: true,
+          generation: state.generations[student.studentId] || "0",
         });
-      button.dataset.studentId = student.studentId;
-      button.disabled =
-        disabled || !!state.lanes.get(student.studentId)?.failure;
-      // Keep unchanged search buttons mounted so background saves do not steal keyboard focus.
-      if (root.children[index] !== button)
-        root.insertBefore(button, root.children[index] || null);
-      buttons.delete(student.studentId);
+        extraLeaveApproved = false;
+        state.notice = "";
+        renderExtras();
+      });
+      button.disabled = disabled || state.rows.has(student.studentId);
+      root.appendChild(button);
     });
-    buttons.forEach((button) => button.remove());
   }
   function renderExtras() {
     if (!token) return;
-    const state = extraState();
-    const period = Number(document.getElementById("period").value);
-    const busy = extraBusy(state);
-    const disabled = busy || state.readOnly;
-    const rows = new Map(
-      Array.from(state.rows, ([id, row]) => [
-        id,
-        { ...row, values: [...row.values] },
-      ]),
+    const state = extraCurrent;
+    const editable = extraEditable(state);
+    const rows = Array.from(state.rows.values()).sort((a, b) =>
+      a.studentId.localeCompare(b.studentId),
     );
-    state.lanes.forEach((lane, id) => {
-      // Conflicts show the actual server row, never an optimistic resurrection.
-      if (!lane.conflict)
-        lane.queue.forEach((op) => {
-          if (op.action !== "add") return;
-          if (!rows.has(id))
-            rows.set(id, { ...lane.student, values: ["", "", ""] });
-          rows.get(id).values[op.period - 1] = "2";
-        });
-    });
-    state.selected.forEach((id) => {
-      if (!rows.has(id)) state.selected.delete(id);
-    });
-    const ids = new Set([...rows.keys(), ...state.lanes.keys()]);
+    const checkedCount = rows.filter((row) => row.checked).length;
     extraElement("count").textContent = state.readOnly
-      ? ""
-      : `${state.selected.size}명 선택됨`;
+      ? `${rows.length}명 · 조회 전용`
+      : `${rows.length}명 · 출석 ${checkedCount}명 · 결석 ${rows.length - checkedCount}명`;
     extraElement("status").textContent = state.loading
       ? "미신청자 불러오는 중..."
-      : busy
+      : state.running
         ? "미신청자 저장 중..."
-        : `${state.date} · ${period}교시 · ${rows.size}명`;
+        : `${state.date} · ${state.period}교시${extraPending() ? " · 저장 대기" : ""}`;
     message(
       extraElement("message"),
       [state.notice, ...state.errors].filter(Boolean).join("\n"),
       "error",
     );
-    extraElement("all").disabled = disabled || !rows.size;
-    const all =
-      rows.size > 0 &&
-      Array.from(rows.keys()).every((id) => state.selected.has(id));
+    if (state.request && !state.running && !state.loading) {
+      const discard = extraButton("대기 취소 · 서버 다시 읽기", () => {
+        if (
+          !window.confirm(
+            "미신청자 초안과 대기 요청의 재시도를 포기하고 서버에서 다시 읽을까요?\n결과를 확인하지 못한 요청은 이미 저장되었거나 나중에 반영될 수 있습니다. 서버에 전송한 요청은 취소되지 않으며 저장된 결과도 유지됩니다.",
+          )
+        )
+          return;
+        extraLeaveApproved = true;
+        void loadExtras();
+      });
+      extraElement("message").classList.remove("hidden");
+      extraElement("message").appendChild(discard);
+    }
+    const all = rows.length > 0 && checkedCount === rows.length;
     extraElement("all").textContent = all ? "전체 해제" : "전체 선택";
+    extraElement("all").disabled = !editable || !rows.length;
     extraElement("all").onclick = () => {
-      if (disabled) return;
-      state.selected = all ? new Set() : new Set(rows.keys());
+      if (!extraEditable(state)) return;
+      state.rows.forEach((row) => {
+        row.checked = !all;
+      });
+      extraLeaveApproved = false;
       renderExtras();
     };
     document.querySelectorAll("[data-extra-action]").forEach((button) => {
-      button.disabled = disabled || !state.selected.size;
+      const action = button.dataset.extraAction;
+      if (action === "save") {
+        button.textContent = state.request
+          ? state.request.action === "save"
+            ? "저장 재시도"
+            : "삭제 재시도"
+          : "저장";
+        button.disabled = state.request
+          ? state.running || state.loading
+          : !editable || !rows.length;
+      } else if (action === "removeAll") {
+        button.textContent = "모두 삭제";
+        button.disabled = !editable || !rows.length;
+      }
     });
     const root = extraElement("list");
-    const focusedControl = root.contains(document.activeElement)
+    const focused = root.contains(document.activeElement)
       ? document.activeElement.dataset.extraFocus
       : null;
-    root.setAttribute("aria-busy", String(busy));
+    root.setAttribute("aria-busy", String(state.running || state.loading));
     root.replaceChildren();
-    Array.from(ids)
-      .sort()
-      .forEach((id) => {
-        const lane = state.lanes.get(id);
-        const row = rows.get(id);
-        const student = row || lane.student;
-        const value = row?.values[period - 1];
-        const li = document.createElement("li");
-        li.className = "extra-item";
-        li.classList.toggle("extra-present", value === "2");
-        li.classList.toggle("extra-absent", value === "3");
-        li.classList.toggle("extra-selected", state.selected.has(id));
-        const label = document.createElement("label");
-        label.className = "extra-choice";
-        const checkbox = document.createElement("input");
-        checkbox.type = "checkbox";
-        checkbox.dataset.extraFocus = `${id}:select`;
-        checkbox.checked = state.selected.has(id);
-        checkbox.disabled = disabled || !row;
-        checkbox.onchange = () => {
-          if (checkbox.checked) state.selected.add(id);
-          else state.selected.delete(id);
-          renderExtras();
-        };
-        const text = document.createElement("span");
-        text.textContent = `${student.name} (${id})`;
-        label.append(checkbox, text);
-        const status = document.createElement("span");
-        status.className = `extra-badge ${value === "2" ? "extra-present" : value === "3" ? "extra-absent" : ""}`;
-        status.textContent = row
-          ? `${period}교시 · ${value === "2" ? "출석" : value === "3" ? "결석" : "기록 없음"}`
-          : "서버 목록에 없음";
-        li.append(label, status);
-        if (lane) {
-          const saving = document.createElement("span");
-          saving.className = lane.failure ? "extra-failure" : "muted";
-          saving.textContent = lane.failure
-            ? `${lane.failure} (${lane.queue.map((op) => `${op.period}교시 ${extraActionLabels[op.action]}`).join(" → ")} · ${lane.queue.length}건 대기)`
-            : `저장 중... (${lane.queue.length}건)`;
-          li.appendChild(saving);
-          if (lane.failure) {
-            const retry = extraButton(
-              lane.conflict ? "최신 상태로 재확인" : "같은 요청 재시도",
-              () => retryExtra(state, id),
-            );
-            retry.disabled = busy || state.readOnly;
-            retry.dataset.extraFocus = `${id}:retry`;
-            const reread = extraButton("서버 다시 읽기 · 대기 취소", () =>
-              discardExtra(state, id),
-            );
-            reread.disabled = busy;
-            reread.dataset.extraFocus = `${id}:reread`;
-            li.append(retry, reread);
-          }
-        }
-        root.appendChild(li);
-      });
-    if (!ids.size) {
+    rows.forEach((row) => {
+      const id = row.studentId;
+      const actual = row.values[state.period - 1];
+      const value = state.readOnly ? actual : row.checked ? "2" : "3";
+      const li = document.createElement("li");
+      li.className = `extra-item${value === "2" ? " extra-present" : value === "3" ? " extra-absent" : ""}`;
+      const label = document.createElement("label");
+      label.className = "extra-choice";
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.dataset.extraFocus = `${id}:check`;
+      checkbox.checked = state.readOnly ? actual === "2" : row.checked;
+      checkbox.disabled = !editable;
+      checkbox.onchange = () => {
+        if (!extraEditable(state)) return;
+        row.checked = checkbox.checked;
+        extraLeaveApproved = false;
+        renderExtras();
+      };
+      const text = document.createElement("span");
+      text.textContent = `${row.name} (${id})`;
+      label.append(checkbox, text);
+      const badge = document.createElement("span");
+      badge.className = "extra-badge";
+      const draft = !state.readOnly && (row.isNew || actual !== value);
+      badge.textContent = `${state.period}교시 · ${value === "2" ? "출석" : value === "3" ? "결석" : "기록 없음"}${draft ? " · 저장 전" : ""}`;
+      li.append(label, badge);
+      if (!state.readOnly) {
+        const remove = extraButton("×", () => removeExtra(row), "secondary");
+        remove.setAttribute("aria-label", `${row.name} (${id}) 미신청자 삭제`);
+        remove.title = "1~3교시 모두 삭제";
+        remove.dataset.extraFocus = `${id}:remove`;
+        remove.disabled = !editable;
+        li.appendChild(remove);
+      }
+      root.appendChild(li);
+    });
+    if (!rows.length) {
       const empty = document.createElement("li");
       empty.textContent = "추가된 미신청자가 없습니다.";
       root.appendChild(empty);
     }
-    if (focusedControl)
+    if (focused)
       Array.from(root.querySelectorAll("[data-extra-focus]"))
         .find(
           (control) =>
-            control.dataset.extraFocus === focusedControl && !control.disabled,
+            control.dataset.extraFocus === focused && !control.disabled,
         )
         ?.focus({ preventScroll: true });
     renderExtraSearch();
   }
-  function enqueueExtra(state, student, action, period, start = true) {
-    let lane = state.lanes.get(student.studentId);
-    if (!lane) {
-      lane = {
-        student,
-        queue: [],
-        version: state.versions[student.studentId] || "",
-        running: false,
-        failure: "",
-        conflict: false,
-      };
-      state.lanes.set(student.studentId, lane);
-    }
-    lane.queue.push({
-      action,
-      period,
-      requestId: crypto.randomUUID(),
-      selections: null,
-    });
-    if (start) void pumpExtra(state, student.studentId);
+  function extraSelection(row) {
+    return {
+      studentId: row.studentId,
+      generation: row.generation,
+      isNew: row.isNew,
+      checked: row.checked,
+    };
   }
-  async function pumpExtra(state, id) {
-    const lane = state.lanes.get(id);
-    if (!lane || lane.running || lane.failure || !lane.queue.length || !token)
+  function removeExtra(row) {
+    const state = extraCurrent;
+    if (!extraEditable(state)) return;
+    if (row.isNew) {
+      state.rows.delete(row.studentId);
+      extraLeaveApproved = false;
+      return renderExtras();
+    }
+    if (
+      !window.confirm(
+        `${state.date} ${row.name} (${row.studentId}) 학생과 학생의 1-3교시 출결 정보를 모두 삭제할까요?`,
+      )
+    )
       return;
+    void submitExtras("remove", [extraSelection(row)]);
+  }
+  async function submitExtras(action, selections) {
+    const state = extraCurrent;
+    if (!token || extraOperationBusy() || state.loading) return;
+    if (!state.request) {
+      if (!extraEditable(state)) return;
+      state.request = Object.freeze({
+        date: state.date,
+        period: state.period,
+        action,
+        selections: Object.freeze(
+          selections.map((item) => Object.freeze({ ...item })),
+        ),
+        requestId: crypto.randomUUID(),
+      });
+    }
+    const request = state.request;
     const epoch = teacherEpoch;
-    lane.running = true;
-    const op = lane.queue[0];
-    op.selections ||= [{ studentId: id, version: lane.version }];
-    const revisions = new Map(state.revisions);
+    state.running = true;
+    extraOperationCount++;
+    state.notice = "";
+    extraLeaveApproved = false;
     renderExtras();
     try {
       const result = unwrap(
         await callServer(
-          "teacherExtraChange",
+          "teacherExtraSave",
           token,
-          state.date,
-          op.period,
-          op.action,
-          op.selections,
-          op.requestId,
+          request.date,
+          request.period,
+          request.action,
+          request.selections,
+          request.requestId,
         ),
       );
-      if (epoch !== teacherEpoch) return;
-      mergeExtraView(state, result.view, revisions, id);
-      if (result.conflict) {
-        lane.conflict = true;
-        lane.failure =
-          "다른 교사의 변경과 충돌했습니다. 최신 서버 상태를 확인하세요.";
-      } else {
-        lane.queue.shift();
-        if (!lane.queue.length) state.lanes.delete(id);
-        else {
-          // A replay returns a fresh view, not necessarily this request's committed version.
-          const appliedVersion = result.appliedVersions?.[id];
+      if (epoch !== teacherEpoch || state !== extraCurrent) return;
+      // Row deletion must not throw away unrelated, unsaved checkbox changes or new rows.
+      const drafts = request.action === "remove" ? new Map(state.rows) : null;
+      applyExtraView(state, result.view);
+      if (drafts)
+        drafts.forEach((row, id) => {
+          if (id === request.selections[0].studentId) return;
+          const latest = state.rows.get(id);
           if (
-            typeof appliedVersion !== "string" ||
-            appliedVersion !== (result.view.versions[id] || "")
-          ) {
-            lane.conflict = true;
-            lane.failure =
-              typeof appliedVersion === "string"
-                ? "이전 작업은 저장되었지만 이후 다른 변경이 있습니다. 남은 작업을 재확인하세요."
-                : "이전 작업은 저장되었지만 저장 직후 버전을 확인할 수 없습니다. 남은 작업을 재확인하세요.";
-          } else lane.version = appliedVersion;
-        }
-      }
+            row.isNew &&
+            !latest &&
+            row.generation === (state.generations[id] || "0")
+          )
+            state.rows.set(id, row);
+          else if (
+            latest &&
+            latest.generation === row.generation &&
+            (row.isNew || row.checked !== row.initialChecked)
+          )
+            latest.checked = row.checked;
+        });
+      state.request = null;
+      state.notice = "";
     } catch (error) {
-      if (epoch !== teacherEpoch) return;
+      if (epoch !== teacherEpoch || state !== extraCurrent) return;
       if (error.code?.startsWith("AUTH")) return authFail();
-      lane.failure = error.message || "저장 결과를 확인하지 못했습니다.";
+      // Even a server error may follow a durable intent. Never regenerate its UUID or payload.
+      state.notice = `${error.message || "결과를 확인하지 못했습니다."} 같은 요청을 재시도하거나 초안을 버리고 서버에서 다시 읽어 주세요. 결과를 확인할 때까지 초안 변경은 잠겨 있습니다.`;
     } finally {
-      if (epoch === teacherEpoch) {
-        lane.running = false;
-        renderExtras();
-        if (!lane.failure) void pumpExtra(state, id);
-      }
-    }
-  }
-  function retryExtra(state, id) {
-    const lane = state.lanes.get(id);
-    if (!lane?.failure || extraBusy(state) || state.readOnly) return;
-    if (lane.conflict) {
-      const op = lane.queue[0];
-      if (
-        !window.confirm(
-          `${id} 학생의 최신 서버 상태를 기준으로 다음 ${lane.queue.length}건을 다시 진행할까요?\n${lane.queue.map((item) => `${item.period}교시 ${extraActionLabels[item.action]}`).join(" → ")}\n삭제된 학생은 추가 작업일 때만 다시 등록됩니다.`,
-        )
-      )
-        return;
-      lane.version = state.versions[id] || "";
-      op.requestId = crypto.randomUUID();
-      op.selections = null;
-      lane.conflict = false;
-    }
-    lane.failure = "";
-    void pumpExtra(state, id);
-  }
-  async function discardExtra(state, id) {
-    const lane = state.lanes.get(id);
-    if (!lane?.failure || extraBusy(state)) return;
-    if (
-      !window.confirm(
-        `${id} 학생의 대기 작업 ${lane.queue.length}건을 취소하고 서버에서 다시 읽을까요? 이미 저장된 결과는 유지됩니다.`,
-      )
-    )
-      return;
-    const epoch = teacherEpoch;
-    const revisions = new Map(state.revisions);
-    const loadId = ++state.loadId;
-    state.loading = true;
-    renderExtras();
-    try {
-      const view = unwrap(
-        await callServer(
-          "getTeacherExtras",
-          token,
-          state.date,
-          Number(document.getElementById("period").value),
-        ),
-      );
-      if (epoch !== teacherEpoch || loadId !== state.loadId) return;
-      state.lanes.delete(id);
-      mergeExtraView(state, view, revisions, id);
-      state.selected.delete(id);
-    } catch (error) {
-      if (epoch !== teacherEpoch) return;
-      if (error.code?.startsWith("AUTH")) return authFail();
-      if (loadId !== state.loadId) return;
-      state.notice = "다시 읽지 못해 대기 작업을 유지합니다. " + error.message;
-    } finally {
-      if (epoch === teacherEpoch && loadId === state.loadId) {
-        state.loading = false;
+      extraOperationCount--;
+      if (epoch === teacherEpoch && state === extraCurrent) {
+        state.running = false;
         renderExtras();
       }
     }
@@ -495,38 +447,34 @@
   extraElement("search").addEventListener("input", renderExtraSearch);
   document.querySelectorAll("[data-extra-action]").forEach((button) => {
     button.onclick = () => {
-      const state = extraState();
-      if (state.readOnly || extraBusy(state) || !state.selected.size) return;
-      const ids = Array.from(state.selected);
-      if (ids.some((id) => state.lanes.get(id)?.failure)) {
-        state.notice =
-          "선택한 학생의 실패한 작업을 재시도하거나 서버에서 다시 읽은 뒤 변경하세요.";
-        return renderExtras();
-      }
+      const state = extraCurrent;
       const action = button.dataset.extraAction;
-      if (
-        action === "remove" &&
-        !window.confirm(
-          "선택한 학생을 목록에서 제거할까요? 1~3교시가 모두 빈 값이어야 하며 서버에서 다시 확인합니다.",
+      if (action === "save" && state.request) return void submitExtras();
+      if (!extraEditable(state)) return;
+      if (action === "save") {
+        if (state.rows.size)
+          void submitExtras(
+            "save",
+            Array.from(state.rows.values(), extraSelection),
+          );
+      } else if (action === "removeAll") {
+        if (
+          !window.confirm(
+            `${state.date} 미신청자 목록과 1~3교시 출결값을 모두 삭제할까요?`,
+          )
         )
-      )
-        return;
-      const period = Number(document.getElementById("period").value);
-      ids.forEach((id) =>
-        enqueueExtra(
-          state,
-          state.rows.get(id) || state.lanes.get(id).student,
-          action,
-          period,
-          false,
-        ),
-      );
-      state.selected.clear();
-      state.notice = "";
-      renderExtras();
-      ids.forEach((id) => {
-        void pumpExtra(state, id);
-      });
+          return;
+        const saved = Array.from(state.rows.values()).filter(
+          (row) => !row.isNew,
+        );
+        if (!saved.length) {
+          state.rows.clear();
+          extraLeaveApproved = false;
+          renderExtras();
+          return;
+        }
+        void submitExtras("removeAll", saved.map(extraSelection));
+      }
     };
   });
 </script>

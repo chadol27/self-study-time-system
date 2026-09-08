@@ -199,7 +199,9 @@ function readRoster_() {
   if (lastRow < 3) return [];
   const width = Math.max(APP.STUDENT_KEY_COL, sheet.getLastColumn());
   const raw = sheet.getRange(3, 1, lastRow - 2, width).getValues();
-  const display = sheet.getRange(3, 1, lastRow - 2, width).getDisplayValues();
+  const display = sheet
+    .getRange(3, 1, lastRow - 2, APP.STUDENT_KEY_COL)
+    .getDisplayValues();
   const studentIds = display.map(function (row) {
     return row[0].trim();
   });
@@ -285,7 +287,7 @@ function appendAudits_(rows) {
   sheet.getRange(startRow, 5, rows.length, 1).setNumberFormat("yyyy-MM-dd");
 }
 
-function validateAll_(includeExtras = true) {
+function validateAll_(includeExtras = true, snapshot = null) {
   const errors = [];
   if (includeExtras) {
     const extras = readExtraSheet_();
@@ -297,7 +299,7 @@ function validateAll_(includeExtras = true) {
       );
     });
   }
-  const config = getConfig_();
+  const config = snapshot ? snapshot.config : getConfig_();
   if (!config.ok)
     errors.push("Script Properties 오류: " + config.errors.join(", "));
   [
@@ -342,7 +344,7 @@ function validateAll_(includeExtras = true) {
     errors.push("설정 시트 헤더가 올바르지 않습니다.");
   if (!config.ok || !headersValid_())
     return { errors: errors, excludedKeys: [] };
-  const students = readRoster_();
+  const students = snapshot ? snapshot.roster : readRoster_();
   const directory = getStudentDirectory_();
   Array.prototype.push.apply(errors, directory.errors);
   const excluded = new Set();
@@ -438,7 +440,7 @@ function validateAll_(includeExtras = true) {
       }
     });
   }
-  const cols = getAttendanceColumns_();
+  const cols = snapshot ? snapshot.columns : getAttendanceColumns_();
   cols.forEach(function (x) {
     if (!x.key || x.periods.join("|") !== "1교시|2교시|3교시")
       errors.push("출결 날짜/교시 헤더 구조 오류: " + x.col + "열");

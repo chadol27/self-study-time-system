@@ -22,9 +22,8 @@ function readExtraSheet_() {
   const sheet = spreadsheet_().getSheetByName(APP.SHEETS.EXTRAS);
   const blocks = [];
   const errors = [];
-  if (!sheet || !sheet.getLastColumn())
-    return { sheet: sheet, blocks: blocks, errors: errors };
-  const width = sheet.getLastColumn();
+  const width = sheet ? sheet.getLastColumn() : 0;
+  if (!width) return { sheet: sheet, blocks: blocks, errors: errors };
   if (sheet.getMaxRows() < 2) {
     errors.push("미신청자 시트 헤더 2행이 없습니다.");
     return { sheet: sheet, blocks: blocks, errors: errors };
@@ -72,14 +71,16 @@ function readExtraRows_(sheet, block) {
   const errors = [];
   const invalidIds = new Set();
   let nextRow = 3;
-  if (!sheet || !block || sheet.getLastRow() < 3)
+  const lastRow = sheet && block ? sheet.getLastRow() : 0;
+  if (lastRow < 3)
     return {
       rows: rows,
       errors: errors,
       invalidIds: invalidIds,
       nextRow: nextRow,
+      raw: [],
     };
-  const range = sheet.getRange(3, block.col, sheet.getLastRow() - 2, 4);
+  const range = sheet.getRange(3, block.col, lastRow - 2, 4);
   const raw = range.getValues();
   const display = range.getDisplayValues();
   const formulas = range.getFormulas();
@@ -129,6 +130,7 @@ function readExtraRows_(sheet, block) {
     errors: errors,
     invalidIds: invalidIds,
     nextRow: nextRow,
+    raw: raw,
   };
 }
 
@@ -181,13 +183,15 @@ function extraMetadata_(date) {
   return { props: props, all: all, prefix: prefix };
 }
 
-function extraView_(date, period, metadata) {
-  const source = readExtraSheet_();
+function extraView_(date, period, metadata, snapshot) {
+  const source = snapshot ? snapshot.source : readExtraSheet_();
   const block = source.blocks.find(function (item) {
     return item.key === date;
   });
-  const data = readExtraRows_(source.sheet, block);
-  const directory = readStudentDirectorySheet_();
+  const data = snapshot ? snapshot.data : readExtraRows_(source.sheet, block);
+  const directory = snapshot
+    ? snapshot.directory
+    : readStudentDirectorySheet_();
   const versions = Object.create(null);
   const generations = Object.create(null);
   Object.keys(metadata.all)
@@ -221,12 +225,29 @@ function extraView_(date, period, metadata) {
         };
       });
   const errors = source.errors.concat(data.errors);
+  const deletionGenerations = Object.create(null);
+  Object.keys(metadata.all).forEach(function (key) {
+    if (key.indexOf(metadata.prefix + "D_") !== 0) return;
+    const record = JSON.parse(metadata.all[key]);
+    deletionGenerations[record.studentId] = record.generation;
+  });
+  // Older tombstones used only V_; keep them meaningful for explicit re-adds.
+  Object.keys(generations).forEach(function (id) {
+    if (
+      !data.rows.some(function (row) {
+        return row.studentId === id;
+      }) &&
+      !Object.prototype.hasOwnProperty.call(deletionGenerations, id)
+    )
+      deletionGenerations[id] = generations[id];
+  });
   return {
     date: date,
     period: period,
     readOnly: date !== todayKey_(),
     students: students,
     versions: versions,
+    generations: deletionGenerations,
     errors: errors,
   };
 }
@@ -237,11 +258,12 @@ function getTeacherExtras(token, date, period) {
     requireTeacher_(token);
     return withWriteLock_(function () {
       requireTeacher_(token);
-      recoverExtraPending_();
       date = String(date);
       period = Number(period);
+      const metadata = extraMetadata_(date);
+      const snapshot = recoverExtraPending_(metadata);
       extraDatePeriod_(date, period, false);
-      return extraView_(date, period, extraMetadata_(date));
+      return extraView_(date, period, metadata, snapshot);
     });
   });
 }
@@ -286,11 +308,14 @@ function extraAuditKey_(row) {
   );
 }
 
-function recoverExtraPending_() {
+function recoverExtraPending_(metadata) {
   requireConfig_();
   // Finish already-authorized intents across midnight; new writes still require today.
-  const props = PropertiesService.getScriptProperties();
-  const all = props.getProperties();
+  const props = metadata
+    ? metadata.props
+    : PropertiesService.getScriptProperties();
+  const all = metadata ? metadata.all : props.getProperties();
+  let snapshot = null;
   Object.keys(all)
     .filter(function (key) {
       return (
@@ -301,6 +326,19 @@ function recoverExtraPending_() {
     .sort()
     .forEach(function (receiptKey) {
       const intent = JSON.parse(all[receiptKey]);
+      if (intent.kind === "batch") {
+        const recovered = recoverExtraBatch_(receiptKey, intent, null, {
+          props: props,
+          all: all,
+          prefix: "EXTRA_" + intent.date + "_",
+        });
+        if (metadata && metadata.prefix === "EXTRA_" + intent.date + "_")
+          snapshot = recovered;
+        return;
+      }
+      // Legacy recovery writes cells directly, so an earlier batch snapshot is stale.
+      if (metadata && metadata.prefix === "EXTRA_" + intent.date + "_")
+        snapshot = null;
       const blocked = function () {
         throw userError_(
           "미신청자 미완료 작업과 시트 또는 기록이 일치하지 않습니다. 관리자 확인이 필요합니다.",
@@ -392,6 +430,22 @@ function recoverExtraPending_() {
           studentId: plan.studentId,
           generation: plan.generation,
         });
+        if (!plan.afterId) {
+          revisions[
+            "EXTRA_" + intent.date + "_D_" + hashToken_(plan.studentId)
+          ] = JSON.stringify({
+            studentId: plan.studentId,
+            generation: plan.generation,
+          });
+        } else if (!plan.beforeId) {
+          const deletionKey =
+            "EXTRA_" + intent.date + "_D_" + hashToken_(plan.studentId);
+          if (!props.getProperty(deletionKey))
+            revisions[deletionKey] = JSON.stringify({
+              studentId: plan.studentId,
+              generation: plan.previousGeneration || "0",
+            });
+        }
         audits.push([
           new Date(intent.startedAt),
           "교사",
@@ -427,6 +481,7 @@ function recoverExtraPending_() {
       }
       // Validate the entire batch and its audit suffix before replaying any write.
       props.setProperties(revisions);
+      Object.assign(all, revisions);
       writes.forEach(function (write) {
         const plan = write.plan;
         if (source.sheet.getMaxRows() < plan.row)
@@ -463,17 +518,17 @@ function recoverExtraPending_() {
       });
       appendAudits_(missing);
       SpreadsheetApp.flush();
-      props.setProperty(
-        receiptKey,
-        JSON.stringify({
-          payload: intent.payload,
-          state: "done",
-          changed: intent.plans.length,
-          conflict: false,
-          appliedVersions: intent.appliedVersions,
-        }),
-      );
+      const receipt = JSON.stringify({
+        payload: intent.payload,
+        state: "done",
+        changed: intent.plans.length,
+        conflict: false,
+        appliedVersions: intent.appliedVersions,
+      });
+      props.setProperty(receiptKey, receipt);
+      all[receiptKey] = receipt;
     });
+  return snapshot;
 }
 
 function teacherExtraChange(
