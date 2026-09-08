@@ -245,8 +245,8 @@ function teacherSeats_(key, period, snapshot = null) {
             : raw === "4"
               ? "결석 예정"
               : applied
-                ? "신청함"
-                : "해당 교시 미신청";
+                ? "신청"
+                : "해당교시 미신청";
       seats[s.seat - 1] = {
         seat: s.seat,
         student: { key: s.key, studentId: s.studentId, name: s.name },

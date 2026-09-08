@@ -15,7 +15,7 @@
           </nav>
           <h1>교사 좌석 및 출결 관리</h1>
         </div>
-        <div class="teacher-name-actions">
+        <div id="teacher-actions" class="teacher-name-actions hidden">
           <label>
             교사
             <input
@@ -72,7 +72,7 @@
         </section>
         <section id="seat-card" class="card">
           <div id="batch-actions" class="batch-actions">
-            <strong id="selected-count">0명 출석 예정</strong>
+            <strong id="selected-count">0명 출석</strong>
             <button id="save-seats" type="button" disabled>저장</button>
             <button
               id="toggle-all-seats"
@@ -92,7 +92,7 @@
         >
           <h2 id="extra-title">미신청자</h2>
           <label>
-            이름 또는 학번 검색
+            학생 추가
             <input
               id="extra-search"
               type="search"
@@ -214,6 +214,7 @@
         updateSelectionUi();
         setTeacherLoading(false);
         document.getElementById("teacher-content").classList.add("hidden");
+        document.getElementById("teacher-actions").classList.add("hidden");
         document.getElementById("teacher-login").classList.remove("hidden");
       }
       function renderSeats(v) {
@@ -248,7 +249,7 @@
               openSeat(s);
             };
           } else {
-            seat.innerHTML = `<strong class="seat-number">${s.seat}</strong><span>빈 좌석</span>`;
+            seat.innerHTML = `<strong class="seat-number">${s.seat}</strong>`;
           }
           slot.appendChild(seat);
           root.appendChild(slot);
@@ -274,6 +275,18 @@
         seatDraftDirty =
           selectedKeys.size !== initialSeatKeys.size ||
           Array.from(selectedKeys).some((key) => !initialSeatKeys.has(key));
+        const seatSaveNeeded =
+          seatDraftDirty ||
+          Boolean(
+            current &&
+            !current.readOnly &&
+            current.seats.some(
+              (seat) =>
+                seat.student &&
+                seat.raw !== "4" &&
+                !["2", "3"].includes(seat.raw),
+            ),
+          );
         const byKey = new Map(
           (current?.seats || [])
             .filter((s) => s.student)
@@ -282,13 +295,19 @@
         document.querySelectorAll(".seat[data-student-key]").forEach((seat) => {
           const selected = selectedKeys.has(seat.dataset.studentKey);
           const s = byKey.get(seat.dataset.studentKey);
-          if (s && !current.readOnly && s.raw !== "4") {
-            seat.className = `seat ${selected ? "attended" : s.applied ? "absent" : "not-applied"}`;
-            seat.querySelector("small").textContent = selected
-              ? "출석 예정"
+          if (s) {
+            const plannedLabel = selected
+              ? "출석"
               : s.applied
-                ? "결석 예정"
-                : "해당 교시 미신청";
+                ? "결석"
+                : "해당교시 미신청";
+            const changed =
+              !current.readOnly && s.raw !== "4" && plannedLabel !== s.label;
+            if (!current.readOnly && s.raw !== "4")
+              seat.className = `seat ${selected ? "attended" : s.applied ? "absent" : "not-applied"}`;
+            seat.querySelector("small").textContent = changed
+              ? `${s.label} → ${plannedLabel}`
+              : s.label;
           }
           seat.classList.toggle("selected", selected);
           seat
@@ -302,10 +321,9 @@
         const allSelected =
           count > 0 &&
           selectableKeys.every((studentKey) => selectedKeys.has(studentKey));
-        document.getElementById("selected-count").textContent =
-          current?.readOnly
-            ? "오늘만 수정 가능 · 조회 전용"
-            : `${count}명 출석 예정${seatDraftDirty ? " · 미저장 변경" : ""}`;
+        document.getElementById("selected-count").innerHTML = current?.readOnly
+          ? "조회 전용"
+          : `${count}명 출석${seatSaveNeeded ? ' · <mark class="save-needed">저장 필요</mark>' : ""}`;
         document.getElementById("save-seats").disabled =
           seatLoadCount > 0 ||
           !current ||
@@ -431,6 +449,7 @@
           viewPeriod = String(base.defaultPeriod);
           setTeacherName(teacher.name);
           setTeacherLoading(false);
+          document.getElementById("teacher-actions").classList.remove("hidden");
           document.getElementById("teacher-content").classList.remove("hidden");
           await Promise.all([loadSeats(), loadExtras()]);
         } catch (e) {
