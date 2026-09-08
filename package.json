@@ -11,7 +11,8 @@
     "format:check": "prettier --check \"src/*.html\" && prettier --check \"src/*.gs\" --parser babel",
     "check": "pnpm typecheck && pnpm lint && pnpm format:check",
     "deploy": "pnpm check && clasp push",
-    "forcedeploy": "pnpm check && clasp push --force"
+    "forcedeploy": "pnpm check && clasp push --force",
+    "oneshot": "pnpm format && pnpm check && clasp push"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
